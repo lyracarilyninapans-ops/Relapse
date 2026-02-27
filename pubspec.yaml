@@ -9,18 +9,49 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # State Management
   flutter_riverpod: ^2.6.1
+
+  # Firebase
   firebase_core: ^4.4.0
   firebase_auth: ^6.1.4
   cloud_firestore: ^6.1.2
+  firebase_storage: ^13.0.6
   firebase_messaging: ^16.1.1
-  cached_network_image: ^3.3.1
+
+  # Serialization
+  json_annotation: ^4.9.0
+
+  # Notifications
+  flutter_local_notifications: ^18.0.1
+
+  # Media
+  image_picker: ^1.1.2
+  video_player: ^2.9.2
+  audioplayers: ^6.1.0
+  path_provider: ^2.1.5
+  file_picker: ^9.2.0
+
+  # Connectivity
+  connectivity_plus: ^6.1.2
+
+  # Maps
   google_maps_flutter: ^2.14.2
+
+  # Misc
+  uuid: ^4.5.1
+  intl: ^0.19.0
+  shared_preferences: ^2.5.0
+  cached_network_image: ^3.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  json_serializable: ^6.8.0
+  build_runner: ^2.4.13
+  mockito: ^5.4.5
 
 flutter:
   uses-material-design: true
