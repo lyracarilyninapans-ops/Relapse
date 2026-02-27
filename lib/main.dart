@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'routes.dart';
 import 'theme/app_theme.dart';
 import 'screens/screens.dart';
 import 'services/notification_service.dart';
 import 'services/connectivity_service.dart';
+import 'providers/settings_providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +32,17 @@ Future<void> main() async {
   final connectivityService = ConnectivityPlusService();
   await connectivityService.initialize();
 
-  runApp(const ProviderScope(child: RelapseApp()));
+  // Initialize SharedPreferences
+  final prefs = await SharedPreferences.getInstance();
+
+  runApp(
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+      ],
+      child: const RelapseApp(),
+    ),
+  );
 }
 
 class RelapseApp extends StatelessWidget {

@@ -37,4 +37,11 @@ class PatientRemoteSource {
   Future<void> deletePatient(String uid, String patientId) async {
     await _patientCollection(uid).doc(patientId).delete();
   }
+
+  /// Clear the paired watch ID from a patient record.
+  Future<void> clearPairedWatch(String uid, String patientId) async {
+    await _patientCollection(uid).doc(patientId).update({
+      'pairedWatchId': FieldValue.delete(),
+    });
+  }
 }
