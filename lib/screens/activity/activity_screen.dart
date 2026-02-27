@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:relapse_flutter/models/activity_record.dart';
+import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -6,19 +10,13 @@ import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Activity monitoring screen with location overview, daily summary,
 /// recent activity feed, and location history.
-class ActivityScreen extends StatefulWidget {
+class ActivityScreen extends ConsumerWidget {
   const ActivityScreen({super.key});
 
   @override
-  State<ActivityScreen> createState() => _ActivityScreenState();
-}
-
-class _ActivityScreenState extends State<ActivityScreen> {
-  int _selectedFilter = 0; // 0=Today, 1=This Week, 2=This Month
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sw = MediaQuery.of(context).size.width;
+    final filter = ref.watch(selectedDateRangeFilterProvider);
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -32,9 +30,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
         actions: [
           IconButton(
             icon: const GradientIcon(Icons.calendar_today_outlined, size: 22),
-            onPressed: () {
-              // TODO: open date range picker
-            },
+            onPressed: () {},
           ),
           const SizedBox(width: 4),
         ],
@@ -46,8 +42,11 @@ class _ActivityScreenState extends State<ActivityScreen> {
           children: [
             // ── Date filter chips ──
             _DateFilterRow(
-              selectedIndex: _selectedFilter,
-              onSelected: (i) => setState(() => _selectedFilter = i),
+              selectedIndex: filter.index,
+              onSelected: (i) {
+                ref.read(selectedDateRangeFilterProvider.notifier).state =
+                    DateRangeFilter.values[i];
+              },
             ),
             const SizedBox(height: 20),
 
@@ -151,9 +150,8 @@ class _DateFilterRow extends StatelessWidget {
                       _labels[i],
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight: isSelected
-                            ? FontWeight.bold
-                            : FontWeight.w500,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.w500,
                         color: isSelected ? Colors.white : Colors.grey[600],
                       ),
                     ),
@@ -168,14 +166,44 @@ class _DateFilterRow extends StatelessWidget {
   }
 }
 
-
 // ─── Current Location Card ────────────────────────────────────────────
-class _CurrentLocationCard extends StatelessWidget {
+class _CurrentLocationCard extends ConsumerWidget {
   final double screenWidth;
   const _CurrentLocationCard({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final liveLocation = ref.watch(liveLocationProvider);
+    final szStatus = ref.watch(safeZoneStatusProvider);
+
+    final locationText = liveLocation.when(
+      data: (record) {
+        if (record == null) return 'Waiting for location...';
+        return '${record.latitude?.toStringAsFixed(5)}, ${record.longitude?.toStringAsFixed(5)}';
+      },
+      loading: () => 'Loading location...',
+      error: (_, __) => 'Location unavailable',
+    );
+
+    final updatedText = liveLocation.when(
+      data: (record) {
+        if (record == null) return '';
+        final diff = DateTime.now().difference(record.timestamp);
+        if (diff.inMinutes < 1) return 'Updated just now';
+        if (diff.inMinutes < 60) return 'Updated ${diff.inMinutes} min ago';
+        return 'Updated ${diff.inHours}h ago';
+      },
+      loading: () => '',
+      error: (_, __) => '',
+    );
+
+    final isInside = szStatus == SafeZoneStatus.inside;
+    final szLabel = switch (szStatus) {
+      SafeZoneStatus.inside => 'Safe Zone',
+      SafeZoneStatus.outside => 'Outside',
+      SafeZoneStatus.unknown => 'Unknown',
+    };
+
     return Container(
       decoration: BoxDecoration(
         gradient: AppGradients.cardBorder,
@@ -210,9 +238,7 @@ class _CurrentLocationCard extends StatelessWidget {
               ),
               child: Stack(
                 children: [
-                  // Grid lines for map feel
                   ..._buildGridLines(),
-                  // Center pin
                   Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -254,15 +280,14 @@ class _CurrentLocationCard extends StatelessWidget {
                     left: 12,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
+                          horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: AppColors.safeZoneInsideStart,
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.safeZoneInsideStart.withAlpha(100),
+                            color:
+                                AppColors.safeZoneInsideStart.withAlpha(100),
                             blurRadius: 8,
                           ),
                         ],
@@ -312,7 +337,7 @@ class _CurrentLocationCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '123 Maple Street, Home',
+                          locationText,
                           style: TextStyle(
                             fontSize: scaledFontSize(15, screenWidth),
                             fontWeight: FontWeight.w600,
@@ -322,14 +347,11 @@ class _CurrentLocationCard extends StatelessWidget {
                         const SizedBox(height: 4),
                         Row(
                           children: [
-                            Icon(
-                              Icons.access_time,
-                              size: 14,
-                              color: Colors.grey[500],
-                            ),
+                            Icon(Icons.access_time,
+                                size: 14, color: Colors.grey[500]),
                             const SizedBox(width: 4),
                             Text(
-                              'Updated 2 min ago',
+                              updatedText,
                               style: TextStyle(
                                 fontSize: scaledFontSize(12, screenWidth),
                                 color: Colors.grey[500],
@@ -338,21 +360,22 @@ class _CurrentLocationCard extends StatelessWidget {
                             const SizedBox(width: 12),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
+                                  horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: AppColors.safeZoneInsideStart.withAlpha(
-                                  26,
-                                ),
+                                color: (isInside
+                                        ? AppColors.safeZoneInsideStart
+                                        : AppColors.safeZoneOutsideStart)
+                                    .withAlpha(26),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
-                                'Safe Zone',
+                                szLabel,
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: AppColors.safeZoneInsideStart,
+                                  color: isInside
+                                      ? AppColors.safeZoneInsideStart
+                                      : AppColors.safeZoneOutsideStart,
                                 ),
                               ),
                             ),
@@ -372,44 +395,70 @@ class _CurrentLocationCard extends StatelessWidget {
 
   List<Widget> _buildGridLines() {
     return [
-      // Horizontal lines
       for (int i = 1; i < 4; i++)
         Positioned(
           top: i * 40.0,
           left: 0,
           right: 0,
           child: Container(
-            height: 0.5,
-            color: AppColors.gradientMiddle.withAlpha(30),
-          ),
+              height: 0.5, color: AppColors.gradientMiddle.withAlpha(30)),
         ),
-      // Vertical lines
       for (int i = 1; i < 6; i++)
         Positioned(
           left: i * 70.0,
           top: 0,
           bottom: 0,
           child: Container(
-            width: 0.5,
-            color: AppColors.gradientMiddle.withAlpha(30),
-          ),
+              width: 0.5, color: AppColors.gradientMiddle.withAlpha(30)),
         ),
     ];
   }
 }
 
 // ─── Daily Summary Row ────────────────────────────────────────────────
-class _DailySummaryRow extends StatelessWidget {
+class _DailySummaryRow extends ConsumerWidget {
   final double screenWidth;
   const _DailySummaryRow({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summary = ref.watch(dailySummaryProvider);
+
+    final distance = summary.when(
+      data: (s) {
+        if (s == null) return '--';
+        if (s.distanceMeters >= 1000) {
+          return '${(s.distanceMeters / 1000).toStringAsFixed(1)} km';
+        }
+        return '${s.distanceMeters.toInt()} m';
+      },
+      loading: () => '...',
+      error: (_, __) => '--',
+    );
+
+    final timeOutside = summary.when(
+      data: (s) {
+        if (s == null) return '--';
+        final hours = s.activeMinutes ~/ 60;
+        final mins = s.activeMinutes % 60;
+        if (hours > 0) return '${hours}h ${mins}m';
+        return '${mins}m';
+      },
+      loading: () => '...',
+      error: (_, __) => '--',
+    );
+
+    final places = summary.when(
+      data: (s) => s?.placesVisited.toString() ?? '--',
+      loading: () => '...',
+      error: (_, __) => '--',
+    );
+
     return Row(
       children: [
         _SummaryCard(
           icon: Icons.directions_walk,
-          value: '1.2 km',
+          value: distance,
           label: 'Distance',
           color: AppColors.gradientStart,
           screenWidth: screenWidth,
@@ -417,7 +466,7 @@ class _DailySummaryRow extends StatelessWidget {
         const SizedBox(width: 12),
         _SummaryCard(
           icon: Icons.timer_outlined,
-          value: '3h 20m',
+          value: timeOutside,
           label: 'Time Outside',
           color: AppColors.gradientMiddle,
           screenWidth: screenWidth,
@@ -425,7 +474,7 @@ class _DailySummaryRow extends StatelessWidget {
         const SizedBox(width: 12),
         _SummaryCard(
           icon: Icons.place_outlined,
-          value: '4',
+          value: places,
           label: 'Places',
           color: AppColors.gradientEnd,
           screenWidth: screenWidth,
@@ -501,20 +550,38 @@ class _SummaryCard extends StatelessWidget {
 }
 
 // ─── Movement Chart Card ──────────────────────────────────────────────
-class _MovementChartCard extends StatelessWidget {
+class _MovementChartCard extends ConsumerWidget {
   final double screenWidth;
   const _MovementChartCard({required this.screenWidth});
 
-  // Mock hourly data (24 hours, values 0.0–1.0 representing activity level)
-  static const _hourlyData = [
-    0.0, 0.0, 0.0, 0.0, 0.0, 0.05, // 00–05
-    0.1, 0.3, 0.6, 0.8, 0.65, 0.5, // 06–11
-    0.4, 0.3, 0.55, 0.7, 0.6, 0.35, // 12–17
-    0.2, 0.15, 0.1, 0.05, 0.0, 0.0, // 18–23
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hourlyAsync = ref.watch(hourlyActivityProvider);
+
+    final hourlyData = hourlyAsync.when(
+      data: (counts) {
+        final maxVal = counts.reduce((a, b) => a > b ? a : b);
+        if (maxVal == 0) return List<double>.filled(24, 0.0);
+        return counts.map((c) => c / maxVal).toList();
+      },
+      loading: () => List<double>.filled(24, 0.0),
+      error: (_, __) => List<double>.filled(24, 0.0),
+    );
+
+    // Find peak hour
+    final rawCounts = hourlyAsync.valueOrNull ?? List<int>.filled(24, 0);
+    int peakHour = 0;
+    int peakVal = 0;
+    for (int i = 0; i < rawCounts.length; i++) {
+      if (rawCounts[i] > peakVal) {
+        peakVal = rawCounts[i];
+        peakHour = i;
+      }
+    }
+    final peakLabel = peakVal > 0
+        ? 'Peak: ${peakHour == 0 ? 12 : (peakHour > 12 ? peakHour - 12 : peakHour)} ${peakHour < 12 ? 'AM' : 'PM'}'
+        : 'No activity';
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -531,7 +598,6 @@ class _MovementChartCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Legend row
           Row(
             children: [
               Container(
@@ -552,7 +618,7 @@ class _MovementChartCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                'Peak: 10 AM',
+                peakLabel,
                 style: TextStyle(
                   fontSize: scaledFontSize(12, screenWidth),
                   fontWeight: FontWeight.w600,
@@ -562,13 +628,12 @@ class _MovementChartCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          // Bar chart
           SizedBox(
             height: 100,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: List.generate(24, (i) {
-                final v = _hourlyData[i];
+                final v = hourlyData[i];
                 return Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 1),
@@ -607,30 +672,19 @@ class _MovementChartCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          // Hour labels
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '12 AM',
-                style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-              ),
-              Text(
-                '6 AM',
-                style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-              ),
-              Text(
-                '12 PM',
-                style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-              ),
-              Text(
-                '6 PM',
-                style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-              ),
-              Text(
-                '12 AM',
-                style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-              ),
+              Text('12 AM',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+              Text('6 AM',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+              Text('12 PM',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+              Text('6 PM',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+              Text('12 AM',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500])),
             ],
           ),
         ],
@@ -640,86 +694,78 @@ class _MovementChartCard extends StatelessWidget {
 }
 
 // ─── Recent Activity Feed ─────────────────────────────────────────────
-class _RecentActivityFeed extends StatelessWidget {
+class _RecentActivityFeed extends ConsumerWidget {
   final double screenWidth;
   const _RecentActivityFeed({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
-    final events = [
-      _ActivityEvent(
-        icon: Icons.shield_outlined,
-        title: 'Entered Safe Zone',
-        subtitle: 'Home — 123 Maple Street',
-        time: '2:34 PM',
-        color: AppColors.safeZoneInsideStart,
-        type: _EventType.safeZone,
-      ),
-      _ActivityEvent(
-        icon: Icons.notifications_active_outlined,
-        title: 'Memory Reminder Triggered',
-        subtitle: 'Morning Routine — Photo album',
-        time: '11:00 AM',
-        color: AppColors.gradientStart,
-        type: _EventType.reminder,
-      ),
-      _ActivityEvent(
-        icon: Icons.check_circle_outline,
-        title: 'Routine Completed',
-        subtitle: 'Medication — Morning pills',
-        time: '9:15 AM',
-        color: AppColors.gradientMiddle,
-        type: _EventType.routine,
-      ),
-      _ActivityEvent(
-        icon: Icons.warning_amber_outlined,
-        title: 'Left Safe Zone',
-        subtitle: 'Exited Home boundary',
-        time: '8:45 AM',
-        color: AppColors.safeZoneOutsideStart,
-        type: _EventType.alert,
-      ),
-      _ActivityEvent(
-        icon: Icons.directions_walk,
-        title: 'Walking Detected',
-        subtitle: 'Heading towards Park Avenue',
-        time: '8:40 AM',
-        color: AppColors.tertiaryColor,
-        type: _EventType.location,
-      ),
-      _ActivityEvent(
-        icon: Icons.check_circle_outline,
-        title: 'Routine Completed',
-        subtitle: 'Breakfast — Morning meal',
-        time: '8:00 AM',
-        color: AppColors.gradientMiddle,
-        type: _EventType.routine,
-      ),
-    ];
+  Widget build(BuildContext context, WidgetRef ref) {
+    final feedAsync = ref.watch(activityFeedProvider);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surfaceColor,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(60),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+    return feedAsync.when(
+      data: (records) {
+        if (records.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Center(
+              child: Text(
+                'No activity recorded yet',
+                style: TextStyle(color: Colors.grey[500], fontSize: 14),
+              ),
+            ),
+          );
+        }
+
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.surfaceColor,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(60),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        children: List.generate(events.length, (i) {
-          final event = events[i];
-          final isLast = i == events.length - 1;
-          return _buildEventTile(event, isLast);
-        }),
+          child: Column(
+            children: List.generate(
+              records.length > 10 ? 10 : records.length,
+              (i) {
+                final record = records[i];
+                final isLast =
+                    i == (records.length > 10 ? 9 : records.length - 1);
+                return _buildEventTile(record, isLast);
+              },
+            ),
+          ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Text(
+            'Unable to load activity',
+            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildEventTile(_ActivityEvent event, bool isLast) {
+  Widget _buildEventTile(ActivityRecord record, bool isLast) {
+    final eventInfo = _eventDisplayInfo(record.eventType);
+    final timeStr = DateFormat('h:mm a').format(record.timestamp);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -728,23 +774,22 @@ class _RecentActivityFeed extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 14),
             child: Row(
               children: [
-                // Icon circle
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: event.color.withAlpha(26),
+                    color: eventInfo.color.withAlpha(26),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(event.icon, size: 20, color: event.color),
+                  child:
+                      Icon(eventInfo.icon, size: 20, color: eventInfo.color),
                 ),
                 const SizedBox(width: 12),
-                // Text content
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        event.title,
+                        eventInfo.title,
                         style: TextStyle(
                           fontSize: scaledFontSize(14, screenWidth),
                           fontWeight: FontWeight.w600,
@@ -753,7 +798,8 @@ class _RecentActivityFeed extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        event.subtitle,
+                        record.metadata?['description'] as String? ??
+                            eventInfo.subtitle,
                         style: TextStyle(
                           fontSize: scaledFontSize(12, screenWidth),
                           color: Colors.grey[600],
@@ -762,9 +808,8 @@ class _RecentActivityFeed extends StatelessWidget {
                     ],
                   ),
                 ),
-                // Time
                 Text(
-                  event.time,
+                  timeStr,
                   style: TextStyle(
                     fontSize: scaledFontSize(11, screenWidth),
                     color: Colors.grey[500],
@@ -780,95 +825,148 @@ class _RecentActivityFeed extends StatelessWidget {
       ),
     );
   }
+
+  _EventDisplayInfo _eventDisplayInfo(ActivityEventType type) {
+    switch (type) {
+      case ActivityEventType.safeZoneEnter:
+        return _EventDisplayInfo(
+          icon: Icons.shield_outlined,
+          title: 'Entered Safe Zone',
+          subtitle: 'Returned to safe area',
+          color: AppColors.safeZoneInsideStart,
+        );
+      case ActivityEventType.safeZoneExit:
+        return _EventDisplayInfo(
+          icon: Icons.warning_amber_outlined,
+          title: 'Left Safe Zone',
+          subtitle: 'Exited safe area boundary',
+          color: AppColors.safeZoneOutsideStart,
+        );
+      case ActivityEventType.reminderTriggered:
+        return _EventDisplayInfo(
+          icon: Icons.notifications_active_outlined,
+          title: 'Memory Reminder Triggered',
+          subtitle: 'Geo-reminder activated',
+          color: AppColors.gradientStart,
+        );
+      case ActivityEventType.watchDisconnected:
+        return _EventDisplayInfo(
+          icon: Icons.watch_off,
+          title: 'Watch Disconnected',
+          subtitle: 'Device went offline',
+          color: AppColors.watchDisconnected,
+        );
+      case ActivityEventType.watchReconnected:
+        return _EventDisplayInfo(
+          icon: Icons.watch,
+          title: 'Watch Reconnected',
+          subtitle: 'Device is back online',
+          color: AppColors.watchConnected,
+        );
+      case ActivityEventType.locationUpdate:
+        return _EventDisplayInfo(
+          icon: Icons.directions_walk,
+          title: 'Location Update',
+          subtitle: 'Movement detected',
+          color: AppColors.tertiaryColor,
+        );
+    }
+  }
 }
 
-enum _EventType { safeZone, reminder, routine, alert, location }
-
-class _ActivityEvent {
+class _EventDisplayInfo {
   final IconData icon;
   final String title;
   final String subtitle;
-  final String time;
   final Color color;
-  final _EventType type;
 
-  const _ActivityEvent({
+  const _EventDisplayInfo({
     required this.icon,
     required this.title,
     required this.subtitle,
-    required this.time,
     required this.color,
-    required this.type,
   });
 }
 
 // ─── Location History Timeline ────────────────────────────────────────
-class _LocationHistoryTimeline extends StatelessWidget {
+class _LocationHistoryTimeline extends ConsumerWidget {
   final double screenWidth;
   const _LocationHistoryTimeline({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
-    final locations = [
-      _LocationEntry(
-        name: 'Home',
-        address: '123 Maple Street',
-        time: '2:34 PM — Now',
-        duration: '45 min',
-        icon: Icons.home_outlined,
-        isCurrent: true,
-      ),
-      _LocationEntry(
-        name: 'Central Park',
-        address: '59th St, New York',
-        time: '1:20 PM — 2:30 PM',
-        duration: '1h 10m',
-        icon: Icons.park_outlined,
-      ),
-      _LocationEntry(
-        name: 'Sunrise Pharmacy',
-        address: '45 Oak Avenue',
-        time: '12:50 PM — 1:15 PM',
-        duration: '25 min',
-        icon: Icons.local_pharmacy_outlined,
-      ),
-      _LocationEntry(
-        name: 'Home',
-        address: '123 Maple Street',
-        time: '8:00 AM — 12:45 PM',
-        duration: '4h 45m',
-        icon: Icons.home_outlined,
-      ),
-    ];
+  Widget build(BuildContext context, WidgetRef ref) {
+    final historyAsync = ref.watch(locationHistoryProvider);
 
-    return Column(
-      children: List.generate(locations.length, (i) {
-        final loc = locations[i];
-        final isLast = i == locations.length - 1;
-        return _buildLocationTile(loc, isLast);
-      }),
+    return historyAsync.when(
+      data: (records) {
+        if (records.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Center(
+              child: Text(
+                'No location history available',
+                style: TextStyle(color: Colors.grey[500], fontSize: 14),
+              ),
+            ),
+          );
+        }
+
+        return Column(
+          children: List.generate(
+            records.length > 10 ? 10 : records.length,
+            (i) {
+              final record = records[records.length - 1 - i]; // Reverse: newest first
+              final isLast =
+                  i == (records.length > 10 ? 9 : records.length - 1);
+              final isCurrent = i == 0;
+              return _buildLocationTile(record, isLast, isCurrent);
+            },
+          ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Text(
+            'Unable to load history',
+            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _buildLocationTile(_LocationEntry loc, bool isLast) {
+  Widget _buildLocationTile(
+      ActivityRecord record, bool isLast, bool isCurrent) {
+    final timeStr = DateFormat('h:mm a').format(record.timestamp);
+    final coords =
+        '${record.latitude?.toStringAsFixed(4)}, ${record.longitude?.toStringAsFixed(4)}';
+
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Timeline track
           SizedBox(
             width: 32,
             child: Column(
               children: [
-                // Dot
                 Container(
                   width: 14,
                   height: 14,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: loc.isCurrent ? AppGradients.button : null,
-                    color: loc.isCurrent ? null : Colors.grey.shade300,
-                    boxShadow: loc.isCurrent
+                    gradient: isCurrent ? AppGradients.button : null,
+                    color: isCurrent ? null : Colors.grey.shade300,
+                    boxShadow: isCurrent
                         ? [
                             BoxShadow(
                               color: AppColors.gradientStart.withAlpha(80),
@@ -878,7 +976,6 @@ class _LocationHistoryTimeline extends StatelessWidget {
                         : null,
                   ),
                 ),
-                // Line
                 if (!isLast)
                   Expanded(
                     child: Container(width: 2, color: Colors.grey.shade300),
@@ -887,7 +984,6 @@ class _LocationHistoryTimeline extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Card
           Expanded(
             child: Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -895,7 +991,7 @@ class _LocationHistoryTimeline extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.surfaceColor,
                 borderRadius: BorderRadius.circular(12),
-                border: loc.isCurrent
+                border: isCurrent
                     ? Border.all(
                         color: AppColors.gradientStart.withAlpha(60),
                         width: 1.5,
@@ -914,15 +1010,15 @@ class _LocationHistoryTimeline extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: loc.isCurrent
+                      color: isCurrent
                           ? AppColors.gradientStart.withAlpha(26)
                           : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
-                      loc.icon,
+                      Icons.location_on_outlined,
                       size: 22,
-                      color: loc.isCurrent
+                      color: isCurrent
                           ? AppColors.gradientStart
                           : Colors.grey[600],
                     ),
@@ -933,48 +1029,22 @@ class _LocationHistoryTimeline extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          loc.name,
+                          coords,
                           style: TextStyle(
                             fontSize: scaledFontSize(14, screenWidth),
                             fontWeight: FontWeight.w600,
                             color: AppColors.primaryColor,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          loc.address,
-                          style: TextStyle(
-                            fontSize: scaledFontSize(11, screenWidth),
-                            color: Colors.grey[600],
-                          ),
-                        ),
                         const SizedBox(height: 4),
                         Text(
-                          loc.time,
+                          timeStr,
                           style: TextStyle(
                             fontSize: scaledFontSize(10, screenWidth),
                             color: Colors.grey[500],
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      loc.duration,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700],
-                      ),
                     ),
                   ),
                 ],
@@ -985,22 +1055,4 @@ class _LocationHistoryTimeline extends StatelessWidget {
       ),
     );
   }
-}
-
-class _LocationEntry {
-  final String name;
-  final String address;
-  final String time;
-  final String duration;
-  final IconData icon;
-  final bool isCurrent;
-
-  const _LocationEntry({
-    required this.name,
-    required this.address,
-    required this.time,
-    required this.duration,
-    required this.icon,
-    this.isCurrent = false,
-  });
 }
