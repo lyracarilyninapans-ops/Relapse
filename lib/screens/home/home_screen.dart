@@ -78,13 +78,24 @@ class HomeScreen extends ConsumerWidget {
                 Navigator.pushNamed(context, Routes.editCaregiver);
                 break;
               case 'logout':
-                await ref.read(authServiceProvider).signOut();
-                if (context.mounted) {
-                  Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    Routes.login,
-                    (route) => false,
-                  );
+                try {
+                  await ref.read(authServiceProvider).signOut();
+                  if (context.mounted) {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      Routes.login,
+                      (route) => false,
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Sign out failed: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
                 }
                 break;
             }

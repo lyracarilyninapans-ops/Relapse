@@ -94,13 +94,17 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
       points.add(LatLng(liveLocation!.latitude!, liveLocation.longitude!));
     }
 
-    if (points.length == 1) {
-      await controller
-          .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
-    } else {
-      final bounds = boundsFromPoints(points);
-      await controller
-          .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    try {
+      if (points.length == 1) {
+        await controller
+            .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
+      } else {
+        final bounds = boundsFromPoints(points);
+        await controller
+            .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+      }
+    } catch (_) {
+      // Camera animation can fail if map is not fully ready; safe to ignore.
     }
   }
 
