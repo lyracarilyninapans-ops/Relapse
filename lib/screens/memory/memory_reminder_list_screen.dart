@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -55,7 +56,7 @@ class MemoryReminderListScreen extends StatelessWidget {
             text: 'Create Memory Reminder',
             icon: Icons.add,
             onPressed: () {
-              Navigator.pushNamed(context, '/create-memory');
+              Navigator.pushNamed(context, Routes.createMemory);
             },
           ),
         ),

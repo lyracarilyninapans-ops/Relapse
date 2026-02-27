@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/patient_profile_ui_providers.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -26,7 +27,7 @@ class PatientSetupScreen extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pushReplacementNamed(context, '/main');
+              Navigator.pushReplacementNamed(context, Routes.main);
             },
             child: const Text('Skip'),
           ),
@@ -160,7 +161,7 @@ class PatientSetupScreen extends ConsumerWidget {
               CtaButton(
                 text: 'Complete Setup',
                 onPressed: () {
-                  Navigator.pushReplacementNamed(context, '/main');
+                  Navigator.pushReplacementNamed(context, Routes.main);
                 },
               ),
               const SizedBox(height: 16),

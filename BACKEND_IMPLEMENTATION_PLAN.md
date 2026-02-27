@@ -2,7 +2,7 @@
 
 > **Current State:** The Flutter app is a pure UI shell with zero backend, persistence, or business logic. All data is hardcoded. Two Riverpod providers exist but only manage ephemeral form state.
 
-> **Priority Focus:** The Activity Screen is the first feature to be fully functional end-to-end. All backend phases are ordered to deliver the Activity Screen's data pipeline (watch → cloud → local DB → UI) as early as possible.
+> **Priority Focus:** The Activity Screen is the first feature to be fully functional end-to-end. All backend phases are ordered to deliver the Activity Screen's data pipeline (watch → Firestore → UI) as early as possible.
 
 ---
 
@@ -12,11 +12,11 @@
 2. [Activity Screen — Data Requirements](#2-activity-screen--data-requirements)
 3. [Phase 1 — Foundation (Dependencies, Models, DI)](#3-phase-1--foundation)
 4. [Phase 2 — Authentication](#4-phase-2--authentication)
-5. [Phase 3 — Activity Data Layer (Local DB + Firestore)](#5-phase-3--activity-data-layer)
+5. [Phase 3 — Activity Data Layer (Firestore)](#5-phase-3--activity-data-layer)
 6. [Phase 4 — Activity Providers & Screen Wiring](#6-phase-4--activity-providers--screen-wiring)
 7. [Phase 5 — Watch Communication (Wearable Data Layer)](#7-phase-5--watch-communication)
-8. [Phase 6 — Geofencing & Location Services](#8-phase-6--geofencing--location-services)
-9. [Phase 7 — Full Local Database & Remaining Repositories](#9-phase-7--full-local-database--remaining-repositories)
+8. [Phase 6 — Phone-Side Location Displays](#8-phase-6--phone-side-location-displays)
+9. [Phase 7 — Remaining Repositories & Remote Sources](#9-phase-7--remaining-repositories--remote-sources)
 10. [Phase 8 — Memory Cues (Media & Geo-Reminders)](#10-phase-8--memory-cues)
 11. [Phase 9 — Notifications & Alerts](#11-phase-9--notifications--alerts)
 12. [Phase 10 — Offline Support & Maps](#12-phase-10--offline-support--maps)
@@ -43,9 +43,9 @@
 ├─────────────────────────────────────────────────┤
 │  Data Layer                                     │
 │  • Repository Implementations                   │
-│  • Data Sources (local DB, Firebase, APIs)      │
+│  • Data Sources (Firestore w/ offline, APIs)     │
 │  • DTOs / Mappers                               │
-│  • Services (location, watch comms, media)      │
+│  • Services (watch comms, media)                 │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +66,7 @@ The Activity Screen is the **primary delivery target**. Every backend phase is s
 | UI Element | Required Data | Source | Model |
 |---|---|---|---|
 | **Date filter row** (Today / This Week / This Month) | Date range selector | Local (UI state) | — |
-| **Current location card** (map + LIVE badge + address) | Patient's latest GPS coordinates, timestamp | Watch → Firestore → local DB | `ActivityRecord` (type: `location_update`) |
+| **Current location card** (map + LIVE badge + address) | Patient's latest GPS coordinates, timestamp | Watch → Firestore | `ActivityRecord` (type: `location_update`) |
 | **Safe Zone status pill** (Inside/Outside) | Whether latest location is within safe zone radius | Derived from `ActivityRecord` + `SafeZone` | `SafeZone`, `ActivityRecord` |
 | **Daily summary — Distance** | Total distance traveled today | Watch aggregates → Firestore | `DailySummary.distanceMeters` |
 | **Daily summary — Time Outside** | Minutes spent outside safe zone today | Watch aggregates → Firestore | `DailySummary.activeMinutes` |
@@ -114,7 +114,7 @@ Firestore: users/{uid}/patients/{patientId}/
    ▼
 Flutter App (Riverpod providers)
    ├── StreamProvider listens to Firestore snapshots
-   ├── Caches to local SQLite for offline
+   ├── Firestore offline persistence provides automatic local caching
    │
    ▼
 Activity Screen UI
@@ -137,23 +137,17 @@ dependencies:
   flutter_riverpod: ^2.6.1
 
   # Firebase
-  firebase_core: ^3.12.0
-  firebase_auth: ^5.5.0
-  cloud_firestore: ^5.6.0
+  firebase_core: ^4.4.0
+  firebase_auth: ^6.1.4
+  cloud_firestore: ^6.1.2
   firebase_storage: ^12.4.0
-  firebase_messaging: ^15.2.0
+  firebase_messaging: ^16.1.1
 
-  # Local Database
-  sqflite: ^2.4.2
-  path: ^1.9.1
-
-  # Networking / Serialization
+  # Serialization
   freezed_annotation: ^2.4.1
   json_annotation: ^4.9.0
 
-  # Location & Geofencing
-  geolocator: ^13.0.2
-  geofencing_flutter: ^0.0.2   # or geo_fence_service
+  # Notifications
   flutter_local_notifications: ^18.0.1
 
   # Watch Communication
@@ -170,7 +164,7 @@ dependencies:
   connectivity_plus: ^6.1.2
 
   # Maps (already present)
-  google_maps_flutter: ^2.6.1
+  google_maps_flutter: ^2.14.2
 
   # Misc
   uuid: ^4.5.1
@@ -193,6 +187,10 @@ dev_dependencies:
 - [ ] Add Android app (`com.example.relapse_flutter`)
 - [ ] Download `google-services.json`
 - [ ] Initialize Firebase in `main.dart` before `runApp()`
+- [ ] Enable Firestore offline persistence:
+  ```dart
+  FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
+  ```
 
 ### 2.3 Define Domain Models
 
@@ -258,46 +256,11 @@ FirebaseAuthService implements AuthService
 
 ---
 
-## 5. Phase 3 — Activity Data Layer (Local DB + Firestore)
+## 5. Phase 3 — Activity Data Layer (Firestore)
 
-> **This phase is brought forward from the original Phases 3+4 to unblock the Activity Screen as fast as possible.** It creates only the tables, data sources, repositories, and Firestore listeners needed for activity data.
+> **This phase is brought forward from the original Phases 3+4 to unblock the Activity Screen as fast as possible.** It creates only the Firestore data sources, repositories, and listeners needed for activity data. Firestore's built-in offline persistence replaces a separate local database.
 
-### 5.1 SQLite Database — Activity Tables First
-
-Create `lib/data/local/app_database.dart` with the **activity-critical tables only** in the first pass:
-
-| Table | Maps To | Purpose for Activity Screen |
-|---|---|---|
-| `activity_records` | `ActivityRecord` | Feed, chart, timeline, live location |
-| `daily_summaries` | `DailySummary` | Distance, time outside, places stats |
-| `safe_zones` | `SafeZone` | Inside/Outside pill calculation |
-| `patients` | `Patient` | Patient name, ID (needed everywhere) |
-
-> Remaining tables (`memory_reminders`, `media_items`, `safe_zone_events`) are added in Phase 7.
-
-### 5.2 Activity Local Data Sources
-
-```
-lib/data/local/
-├── app_database.dart                  — DB init with activity tables
-├── activity_local_source.dart         — CRUD for activity_records
-├── daily_summary_local_source.dart    — CRUD for daily_summaries
-├── safe_zone_local_source.dart        — Read safe zone config
-└── patient_local_source.dart          — Read patient info
-```
-
-Key queries in `activity_local_source.dart`:
-```dart
-Future<List<ActivityRecord>> getRecordsByDateRange(String patientId, DateTime start, DateTime end);
-Future<ActivityRecord?> getLatestRecord(String patientId);
-Future<List<ActivityRecord>> getRecordsByType(String patientId, String eventType, DateTime date);
-Future<int> getRecordCountForDate(String patientId, DateTime date);
-Future<List<Map<String, dynamic>>> getHourlyActivityCounts(String patientId, DateTime date);
-Future<void> insertRecords(List<ActivityRecord> records);
-Future<void> deleteOlderThan(DateTime cutoff);
-```
-
-### 5.3 Activity Firestore Listeners
+### 5.1 Activity Firestore Data Sources
 
 ```
 lib/data/remote/
@@ -319,7 +282,7 @@ Future<DailySummary?> getDailySummary(String uid, String patientId, DateTime dat
 Stream<DailySummary?> watchDailySummary(String uid, String patientId, DateTime date);
 ```
 
-### 5.4 Activity Repository
+### 5.2 Activity Repository
 
 ```dart
 /// lib/repositories/activity_repository.dart
@@ -339,26 +302,20 @@ abstract class ActivityRepository {
 
   /// Location history for timeline view
   Future<List<ActivityRecord>> getLocationHistory(String patientId, DateRange range);
-
-  /// Cache Firestore data to local DB
-  Future<void> cacheRecords(List<ActivityRecord> records);
 }
 ```
 
 Implementation (`activity_repository_impl.dart`):
-- Listens to Firestore `activityRecords` via `StreamProvider`
-- Caches every received record to SQLite
-- Returns local DB data when offline
-- Computes `getHourlyActivity()` by grouping cached records by hour
+- Reads/writes Firestore only — relies on Firestore's built-in offline persistence for caching
+- Computes `getHourlyActivity()` by grouping Firestore query results by hour in Dart
+- When offline, Firestore SDK transparently serves cached data and queues writes
 
-### 5.5 Repository Providers
+### 5.3 Repository Providers
 
 ```dart
 final activityRepositoryProvider = Provider<ActivityRepository>((ref) {
   return ActivityRepositoryImpl(
-    localSource: ref.watch(activityLocalSourceProvider),
     remoteSource: ref.watch(activityRemoteSourceProvider),
-    summaryLocalSource: ref.watch(dailySummaryLocalSourceProvider),
     summaryRemoteSource: ref.watch(dailySummaryRemoteSourceProvider),
   );
 });
@@ -443,15 +400,13 @@ Watch → Firestore → Flutter Riverpod providers → Activity Screen UI
          (Phase 3)          (Phase 4)              (Phase 4)
 ```
 
----
-
-## 7. Phase 5 — Watch Communication (Wearable Data Layer)
+> Firestore offline persistence ensures data remains accessible when the device is offline.
 
 ---
 
-## 6. Phase 5 — Watch Communication
+## 7. Phase 5 — Watch Communication
 
-### 6.1 Wearable Data Layer Service (`lib/services/watch_communication_service.dart`)
+### 7.1 Wearable Data Layer Service (`lib/services/watch_communication_service.dart`)
 
 ```
 WatchCommunicationService
@@ -467,7 +422,7 @@ WatchCommunicationService
 └── unpairWatch() → void
 ```
 
-### 6.2 Communication Architecture
+### 7.2 Communication Architecture
 
 ```
 Flutter Phone App                    Wear OS Watch App
@@ -480,7 +435,7 @@ Flutter Phone App                    Wear OS Watch App
       │                                     │
 ```
 
-### 6.3 Pairing Flow
+### 7.3 Pairing Flow
 
 1. Phone generates 6-char pairing code → stores in Firestore `users/{uid}/watchPairing`
 2. Patient enters code on watch → watch queries Firestore for matching code
@@ -488,7 +443,7 @@ Flutter Phone App                    Wear OS Watch App
 4. Phone listens to pairing doc → detects paired status → navigates to patient setup
 5. Both devices establish Wearable Data Layer connection for direct comms
 
-### 6.4 Providers
+### 7.4 Providers
 
 | Provider | Purpose |
 |---|---|
@@ -499,64 +454,41 @@ Flutter Phone App                    Wear OS Watch App
 
 ---
 
-## 8. Phase 6 — Geofencing & Location Services
+## 8. Phase 6 — Phone-Side Location Displays
 
-### 7.1 Location Service (`lib/services/location_service.dart`)
+> **The phone does not perform GPS tracking or geofencing.** All geofence detection happens on the watch. The phone reads watch-reported locations and events from Firestore and displays them. No `geolocator` or `geofencing_flutter` dependencies are needed.
 
-```
-LocationService
-├── requestPermissions() → LocationPermission
-├── getCurrentPosition() → Position
-├── getPositionStream(interval) → Stream<Position>
-├── calculateDistance(lat1, lng1, lat2, lng2) → double
-└── isLocationEnabled() → bool
-```
-
-### 7.2 Geofence Service (`lib/services/geofence_service.dart`)
-
-```
-GeofenceService
-├── registerSafeZone(safeZone) → void
-├── removeSafeZone(zoneId) → void
-├── updateSafeZone(safeZone) → void
-├── onGeofenceEvent → Stream<GeofenceEvent>
-└── getActiveGeofences() → List<SafeZone>
-```
-
-> **Note:** The phone-side geofencing is primarily for monitoring the *watch's reported location*. The actual geofence detection happens on the watch. The phone receives events and displays them.
-
-### 7.3 Phone-Side Location Responsibilities
+### 8.1 Phone-Side Location Responsibilities
 
 | Feature | Implementation |
 |---|---|
 | Display patient location on map | Listen to `activityRecords` stream from Firestore (watch uploads) |
+| Safe zone Inside/Outside status | Derived from latest `activityRecords` location vs `safeZone` config (pure Dart math) |
 | Memory reminder map view | Show markers from `memoryReminders` collection |
 | Safe zone visualization | Draw circle overlay from `safeZone` config |
 | Movement history | Query `activityRecords` for date range |
+| Safe zone breach alerts | Watch writes `safeZoneEvents` → phone receives via Firestore listener → triggers notification |
+
+### 8.2 Distance Calculation Utility
+
+A pure Dart `calculateDistance(lat1, lng1, lat2, lng2)` function (Haversine formula) is sufficient for safe zone inside/outside checks and distance stats. No GPS library needed on the phone.
 
 ---
 
-## 9. Phase 7 — Full Local Database & Remaining Repositories
+## 9. Phase 7 — Remaining Repositories & Remote Sources
 
-> Now that activity data is flowing, build out the remaining tables and repositories.
+> Now that activity data is flowing, build out the remaining repositories and Firestore remote sources for memory, safe zone, and user data.
 
-### 9.1 Additional SQLite Tables
-
-| Table | Maps To | Purpose |
-|---|---|---|
-| `memory_reminders` | `MemoryReminder` | Geo-triggered memory cues |
-| `media_items` | `MediaItem` | Photo/audio/video attachments |
-| `safe_zone_events` | `SafeZoneEvent` | Safe zone breach history |
-
-### 9.2 Additional Local Data Sources
+### 9.1 Additional Remote Sources
 
 ```
-lib/data/local/
-├── memory_reminder_local_source.dart
-└── safe_zone_event_local_source.dart
+lib/data/remote/
+├── user_remote_source.dart
+├── memory_remote_source.dart
+└── safe_zone_event_remote_source.dart
 ```
 
-### 9.3 Additional Repositories
+### 9.2 Additional Repositories
 
 ```
 lib/repositories/
@@ -564,22 +496,14 @@ lib/repositories/
 └── safe_zone_repository.dart + safe_zone_repository_impl.dart
 ```
 
-### 9.4 Additional Remote Sources
-
-```
-lib/data/remote/
-├── user_remote_source.dart
-└── memory_remote_source.dart
-```
-
-### 9.5 Firebase Storage
+### 9.3 Firebase Storage
 
 - Store media files under: `users/{uid}/patients/{patientId}/media/{mediaId}/{filename}`
 - Upload on create, download URL stored in Firestore
 - Cache locally with `cached_network_image` for photos
 - Download videos/audio to local storage for playback
 
-### 9.6 Firestore Full Schema
+### 9.4 Firestore Full Schema
 
 ```
 users/{uid}/
@@ -594,20 +518,22 @@ users/{uid}/
 └── watchPairing: { pairingCode, watchId, status, pairedAt }
 ```
 
-### 9.7 Sync Strategy
+### 9.5 Data Flow
+
+Firestore is the single source of truth. The phone app reads and writes Firestore exclusively. Firestore's built-in offline persistence handles caching and queuing writes when offline.
 
 | Direction | Mechanism |
 |---|---|
-| Phone → Cloud | Write-through on create/update/delete |
-| Cloud → Phone | Firestore `snapshots()` stream listeners |
-| Watch → Cloud → Phone | Watch writes activity/events to Firestore; phone listens |
-| Phone → Cloud → Watch | Phone writes safe zone config; watch listens via Firestore or Wearable Data Layer |
+| Phone → Firestore | Direct writes (Firestore SDK queues when offline) |
+| Firestore → Phone | `snapshots()` stream listeners (served from cache when offline) |
+| Watch → Firestore → Phone | Watch writes activity/events to Firestore; phone listens |
+| Phone → Firestore → Watch | Phone writes safe zone config; watch listens via Firestore or Wearable Data Layer |
 
 ---
 
 ## 10. Phase 8 — Memory Cues (Media & Geo-Reminders)
 
-### 8.1 Memory Reminder Service (`lib/services/memory_reminder_service.dart`)
+### 10.1 Memory Reminder Service (`lib/services/memory_reminder_service.dart`)
 
 ```
 MemoryReminderService
@@ -619,7 +545,7 @@ MemoryReminderService
 └── syncRemindersToWatch(patientId) → void
 ```
 
-### 8.2 Media Service (`lib/services/media_service.dart`)
+### 10.2 Media Service (`lib/services/media_service.dart`)
 
 ```
 MediaService
@@ -633,14 +559,14 @@ MediaService
 └── getLocalCachePath(mediaId) → String?
 ```
 
-### 8.3 Create Reminder Flow (3-Step Wizard)
+### 10.3 Create Reminder Flow (3-Step Wizard)
 
 1. **Step 1 — Name:** Validate title → save to state
 2. **Step 2 — Location:** User taps map → save lat/lng + radius
 3. **Step 3 — Media:** Pick/capture media → upload to Firebase Storage → save URLs
-4. **Submit:** Write `MemoryReminder` to local DB + Firestore + sync to watch
+4. **Submit:** Write `MemoryReminder` to Firestore + sync to watch
 
-### 8.4 Providers
+### 10.4 Providers
 
 | Provider | Purpose |
 |---|---|
@@ -821,13 +747,11 @@ Activity event types expected in `activityRecords`:
 
 #### E) Security & Access Model
 
-- Firestore Rules:
-  - Caregiver can read/write only own `users/{uid}` subtree.
-  - Watch writes only scoped docs through authenticated custom token or App Check enforced channel.
-  - Deny direct client writes to server-managed docs:
-    - `dailySummaries/*`
-    - `latestLocation/*`
-    - `functionLocks/*`
+> **Deferred for development.** During development, Firestore rules are open for rapid iteration. Security rules will be designed and deployed before production, covering:
+> - Caregiver can read/write only own `users/{uid}` subtree
+> - Watch writes scoped to authenticated channels
+> - Server-managed docs (`dailySummaries`, `latestLocation`, `functionLocks`) restricted to Cloud Functions only
+
 - Functions run with admin privileges and become the only writer to server-managed aggregates.
 
 #### F) Observability & Operations
@@ -889,13 +813,18 @@ This Cloud Functions layer guarantees Activity Screen data quality by:
 
 ### 12.1 Offline-First Strategy
 
+Firestore's built-in offline persistence is the primary offline mechanism. When the device loses connectivity, the Firestore SDK:
+- Serves cached data from its local store for all reads/queries
+- Queues all writes and automatically syncs when connectivity returns
+- No custom sync queue or separate local database needed
+
 | Data | Offline Behavior |
 |---|---|
-| Patient profile | Cached in SQLite, always available |
-| Memory reminders | Cached locally, queue writes for sync |
-| Safe zone config | Cached locally |
-| Activity history | Cached locally, new data queued |
-| Media files | Downloaded and cached in app directory |
+| Patient profile | Served from Firestore offline cache |
+| Memory reminders | Served from cache; new writes queued by Firestore SDK |
+| Safe zone config | Served from cache |
+| Activity history | Served from cache; new watch events sync when online |
+| Media files | Downloaded and cached in app directory via `cached_network_image` / `path_provider` |
 | Map tiles | Google Maps offline areas (user-managed) |
 
 ### 12.2 Connectivity Service (`lib/services/connectivity_service.dart`)
@@ -903,17 +832,12 @@ This Cloud Functions layer guarantees Activity Screen data quality by:
 ```
 ConnectivityService
 ├── isOnline → bool
-├── onConnectivityChanged → Stream<bool>
-└── syncPendingChanges() → void   // called when back online
+└── onConnectivityChanged → Stream<bool>
 ```
 
-### 12.3 Sync Queue
+> Used for UI indicators only (e.g., showing an "offline" badge). Firestore SDK handles all data sync internally — no manual `syncPendingChanges()` needed.
 
-- When offline: writes go to local DB + `pending_sync` table
-- When online: `SyncService` drains the queue in order
-- Conflict resolution: last-write-wins with timestamps
-
-### 12.4 Offline Maps Screen
+### 12.3 Offline Maps Screen
 
 - Guide user to download Google Maps offline region
 - Store recommended region based on safe zone center + radius
@@ -978,18 +902,18 @@ ConnectivityService
 | Category | Package | Purpose |
 |---|---|---|
 | **State** | `flutter_riverpod` | Providers, state management |
-| **Firebase** | `firebase_core`, `firebase_auth`, `cloud_firestore`, `firebase_storage`, `firebase_messaging` | Auth, database, file storage, push notifications |
-| **Local DB** | `sqflite`, `path` | Offline-first SQLite storage |
+| **Firebase** | `firebase_core`, `firebase_auth`, `cloud_firestore`, `firebase_storage`, `firebase_messaging` | Auth, database (with offline persistence), file storage, push notifications |
 | **Serialization** | `freezed`, `json_serializable`, `json_annotation` | Immutable models, JSON mapping |
-| **Location** | `geolocator` | GPS position, distance |
 | **Maps** | `google_maps_flutter` | Map display (already present) |
 | **Watch** | `flutter_wear_os_connectivity` | Wearable Data Layer communication |
 | **Media** | `image_picker`, `video_player`, `audioplayers`, `file_picker` | Capture/playback |
 | **Notifications** | `flutter_local_notifications`, `firebase_messaging` | Local + push alerts |
-| **Connectivity** | `connectivity_plus` | Online/offline detection |
+| **Connectivity** | `connectivity_plus` | Online/offline detection (UI indicators) |
 | **Preferences** | `shared_preferences` | Local key-value settings |
 | **Caching** | `cached_network_image`, `path_provider` | Image caching, file paths |
 | **Utilities** | `uuid`, `intl` | IDs, date formatting |
+
+> **Note:** No `sqflite`, `geolocator`, or `geofencing_flutter` dependencies. Firestore offline persistence replaces a local database. Geofence detection runs on the watch only.
 
 ---
 
@@ -997,7 +921,7 @@ ConnectivityService
 
 ```
 lib/
-├── main.dart                              — Firebase init, ProviderScope, routing
+├── main.dart                              — Firebase init (+ offline persistence), ProviderScope, routing
 ├── models/
 │   ├── app_user.dart                      — Freezed
 │   ├── caregiver_profile.dart
@@ -1011,19 +935,14 @@ lib/
 │   ├── watch_status.dart
 │   └── pairing_info.dart
 ├── data/
-│   ├── local/
-│   │   ├── app_database.dart              — SQLite setup, migrations
-│   │   ├── patient_local_source.dart
-│   │   ├── memory_reminder_local_source.dart
-│   │   ├── safe_zone_local_source.dart
-│   │   ├── activity_local_source.dart
-│   │   └── daily_summary_local_source.dart
 │   └── remote/
 │       ├── user_remote_source.dart
 │       ├── patient_remote_source.dart
 │       ├── memory_remote_source.dart
 │       ├── safe_zone_remote_source.dart
-│       └── activity_remote_source.dart
+│       ├── safe_zone_event_remote_source.dart
+│       ├── activity_remote_source.dart
+│       └── daily_summary_remote_source.dart
 ├── repositories/
 │   ├── auth_repository.dart
 │   ├── auth_repository_impl.dart
@@ -1037,15 +956,12 @@ lib/
 │   └── activity_repository_impl.dart
 ├── services/
 │   ├── auth_service.dart
-│   ├── location_service.dart
-│   ├── geofence_service.dart
 │   ├── watch_communication_service.dart
 │   ├── media_service.dart
 │   ├── memory_reminder_service.dart
 │   ├── activity_service.dart
 │   ├── notification_service.dart
-│   ├── connectivity_service.dart
-│   └── sync_service.dart
+│   └── connectivity_service.dart
 ├── providers/
 │   ├── auth_providers.dart                — Auth state, sign-in/up notifiers
 │   ├── auth_ui_providers.dart             — (existing) form UI state
@@ -1060,6 +976,7 @@ lib/
 │   └── settings_providers.dart            — App preferences
 ├── screens/                               — (existing, will be updated)
 ├── widgets/                               — (existing, will be updated)
+├── utils/                                 — (existing) shared utilities
 └── theme/                                 — (existing, no changes needed)
 ```
 
@@ -1069,21 +986,19 @@ lib/
 
 > Activity Screen is the **first fully functional feature**. Phases 1–4 form the critical path to get it working end-to-end.
 
-| Priority | Phase | Effort | Blocking | Activity Screen? |
-|---|---|---|---|---|
-| 🔴 P0 | Phase 1 — Foundation (models, deps) | 3-4 days | Everything | ✅ Required |
-| 🔴 P0 | Phase 2 — Authentication | 2-3 days | All data features | ✅ Required |
-| 🔴 P0 | Phase 3 — Activity Data Layer (DB + Firestore) | 3-4 days | Activity Screen | ✅ **Core** |
-| 🔴 P0 | Phase 4 — Activity Providers & Screen Wiring | 2-3 days | Activity Screen | ✅ **Core** |
-| 🟠 P1 | Phase 5 — Watch Communication | 4-5 days | Watch features | Enhances live data |
-| 🟠 P1 | Phase 6 — Geofencing & Location | 3-4 days | Safe zones | Enhances safe zone pill |
-| 🟠 P1 | Phase 7 — Full DB + Remaining Repos | 3-4 days | Other features | — |
-| 🟡 P2 | Phase 8 — Memory Cues | 3-4 days | Core feature | — |
-| 🟡 P2 | Phase 9 — Notifications | 2-3 days | Alerts | — |
-| 🟢 P3 | Phase 10 — Offline Support | 2-3 days | Resilience | Offline activity cache |
-| 🟢 P3 | Phase 11 — Settings & Preferences | 1-2 days | Secondary features | — |
-| 🟢 P3 | Phase 12 — Testing | 5-7 days | Quality | Activity tests first |
+| Priority | Phase | Blocking | Activity Screen? |
+|---|---|---|---|
+| P0 | Phase 1 — Foundation (models, deps) | Everything | Required |
+| P0 | Phase 2 — Authentication | All data features | Required |
+| P0 | Phase 3 — Activity Data Layer (Firestore) | Activity Screen | **Core** |
+| P0 | Phase 4 — Activity Providers & Screen Wiring | Activity Screen | **Core** |
+| P1 | Phase 5 — Watch Communication | Watch features | Enhances live data |
+| P1 | Phase 6 — Phone-Side Location Displays | Safe zone UI | Enhances safe zone pill (no new deps; Firestore listener + Dart math only) |
+| P1 | Phase 7 — Remaining Repos & Remote Sources | Other features | — |
+| P2 | Phase 8 — Memory Cues | Core feature | — |
+| P2 | Phase 9 — Notifications & Cloud Functions | Alerts | — |
+| P3 | Phase 10 — Offline Support & Maps | Resilience | Firestore offline persistence handles activity cache |
+| P3 | Phase 11 — Settings & Preferences | Secondary features | — |
+| P3 | Phase 12 — Testing & Hardening | Quality | Activity tests first |
 
-**🎯 Activity Screen functional after Phase 4 (~11-14 days)**
-
-**Estimated total: ~37-47 days of development effort**
+**Target milestone:** Activity Screen functional after Phase 4.

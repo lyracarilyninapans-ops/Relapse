@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_ui_providers.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
@@ -128,7 +129,7 @@ class LoginScreen extends ConsumerWidget {
                       alignment: Alignment.centerRight,
                       child: TextButton(
                         onPressed: () {
-                          Navigator.pushNamed(context, '/forgot-password');
+                          Navigator.pushNamed(context, Routes.forgotPassword);
                         },
                         child: const Text(
                           'Forgot Password?',
@@ -151,7 +152,7 @@ class LoginScreen extends ConsumerWidget {
                 isLoading: isLoading,
                 onPressed: () {
                   // Placeholder: navigate to main screen
-                  Navigator.pushReplacementNamed(context, '/main');
+                  Navigator.pushReplacementNamed(context, Routes.main);
                 },
               ),
 
@@ -164,7 +165,7 @@ class LoginScreen extends ConsumerWidget {
                   const Text("Don't have an account? "),
                   TextButton(
                     onPressed: () {
-                      Navigator.pushNamed(context, '/signup');
+                      Navigator.pushNamed(context, Routes.signup);
                     },
                     child: const Text('Sign Up'),
                   ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'routes.dart';
 import 'theme/app_theme.dart';
 import 'screens/screens.dart';
 
@@ -55,23 +56,29 @@ class RelapseApp extends StatelessWidget {
           ),
         );
       },
-      initialRoute: '/splash',
+      initialRoute: Routes.splash,
+      onUnknownRoute: (settings) => MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Not Found')),
+          body: const Center(child: Text('Page not found')),
+        ),
+      ),
       routes: {
-        '/splash': (_) => const SplashScreen(),
-        '/login': (_) => const LoginScreen(),
-        '/signup': (_) => const SignUpScreen(),
-        '/forgot-password': (_) => const ForgotPasswordScreen(),
-        '/main': (_) => const MainScreen(),
-        '/memory-details': (_) => const MemoryDetailsScreen(),
-        '/memory-reminders': (_) => const MemoryReminderListScreen(),
-        '/create-memory': (_) => const CreateMemoryReminderScreen(),
-        '/safe-zone-config': (_) => const SafeZoneConfigScreen(),
-        '/add-patient': (_) => const AddPatientScreen(),
-        '/patient-setup': (_) => const PatientSetupScreen(),
-        '/edit-patient': (_) => const EditPatientProfileScreen(),
-        '/edit-caregiver': (_) => const EditCaregiverProfileScreen(),
-        '/settings': (_) => const SettingsScreen(),
-        '/offline-maps': (_) => const OfflineMapsScreen(),
+        Routes.splash: (_) => const SplashScreen(),
+        Routes.login: (_) => const LoginScreen(),
+        Routes.signup: (_) => const SignUpScreen(),
+        Routes.forgotPassword: (_) => const ForgotPasswordScreen(),
+        Routes.main: (_) => const MainScreen(),
+        Routes.memoryDetails: (_) => const MemoryDetailsScreen(),
+        Routes.memoryReminders: (_) => const MemoryReminderListScreen(),
+        Routes.createMemory: (_) => const CreateMemoryReminderScreen(),
+        Routes.safeZoneConfig: (_) => const SafeZoneConfigScreen(),
+        Routes.addPatient: (_) => const AddPatientScreen(),
+        Routes.patientSetup: (_) => const PatientSetupScreen(),
+        Routes.editPatient: (_) => const EditPatientProfileScreen(),
+        Routes.editCaregiver: (_) => const EditCaregiverProfileScreen(),
+        Routes.settings: (_) => const SettingsScreen(),
+        Routes.offlineMaps: (_) => const OfflineMapsScreen(),
       },
     );
   }

@@ -6,3 +6,4 @@ export 'gradient_button_with_icon.dart';
 export 'cta_button.dart';
 export 'profile_picture_circle.dart';
 export 'info_box.dart';
+export 'section_header.dart';

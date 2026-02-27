@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:relapse_flutter/routes.dart';
+import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -22,7 +24,7 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
   String _watchBehavior = 'vibrate';
   bool _alertOnExit = true;
   bool _autoNavigation = false;
-  final bool _offlineMapsConfirmed = false;
+  bool _offlineMapsConfirmed = false;
   LatLng _safeZoneCenter = const LatLng(37.7749, -122.4194);
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
@@ -58,30 +60,11 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
     final controller = _mapController;
     if (controller == null) return;
 
-    final bounds = _boundsFromPoints([
+    final bounds = boundsFromPoints([
       _caregiverLocation,
       _patientLocation,
     ]);
     await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
-  }
-
-  LatLngBounds _boundsFromPoints(List<LatLng> points) {
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (final point in points.skip(1)) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
-    }
-
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
   }
 
   Set<Circle> get _circles => {
@@ -364,8 +347,10 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
           ),
           const SizedBox(height: 12),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pushNamed(context, '/offline-maps');
+            onPressed: () async {
+              await Navigator.pushNamed(context, Routes.offlineMaps);
+              if (!mounted) return;
+              setState(() => _offlineMapsConfirmed = true);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orange,
@@ -470,7 +455,7 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
           ),
           RadioGroup<String>(
             groupValue: _watchBehavior,
-            onChanged: (val) {
+            onChanged: (String? val) {
               if (val != null) setState(() => _watchBehavior = val);
             },
             child: Column(
@@ -505,7 +490,6 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
   }
 
   Widget _radioOption(String value, String title, String subtitle) {
-    final selected = _watchBehavior == value;
     return RadioListTile<String>(
       value: value,
       activeColor: AppColors.primaryColor,
@@ -513,10 +497,6 @@ class _SafeZoneConfigScreenState extends State<SafeZoneConfigScreen> {
       subtitle: Text(
         subtitle,
         style: TextStyle(fontSize: 12, color: Colors.grey[400]),
-      ),
-      secondary: Icon(
-        selected ? Icons.radio_button_checked : Icons.radio_button_off,
-        color: selected ? AppColors.primaryColor : Colors.grey,
       ),
     );
   }

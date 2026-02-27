@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:relapse_flutter/routes.dart';
+import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
@@ -85,27 +87,8 @@ class _MemoryScreenState extends State<MemoryScreen> {
     if (controller == null) return;
 
     final points = <LatLng>[_caregiverLocation, _patientLocation];
-    final bounds = _boundsFromPoints(points);
+    final bounds = boundsFromPoints(points);
     await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
-  }
-
-  LatLngBounds _boundsFromPoints(List<LatLng> points) {
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (final point in points.skip(1)) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
-    }
-
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
   }
 
   @override
@@ -269,7 +252,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
               backgroundColor: Colors.transparent,
               elevation: 0,
               onPressed: () {
-                Navigator.pushNamed(context, '/create-memory');
+                Navigator.pushNamed(context, Routes.createMemory);
               },
               child: const Icon(Icons.add, size: 32, color: Colors.white),
             ),

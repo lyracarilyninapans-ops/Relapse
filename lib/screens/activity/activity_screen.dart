@@ -56,7 +56,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             const SizedBox(height: 28),
 
             // ── Daily Summary ──
-            _SectionHeader(
+            SectionHeader(
               icon: Icons.bar_chart_rounded,
               title: 'DAILY SUMMARY',
               screenWidth: sw,
@@ -66,7 +66,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             const SizedBox(height: 28),
 
             // ── Activity Chart ──
-            _SectionHeader(
+            SectionHeader(
               icon: Icons.show_chart_outlined,
               title: 'MOVEMENT PATTERN',
               screenWidth: sw,
@@ -76,7 +76,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             const SizedBox(height: 28),
 
             // ── Recent Activity Feed ──
-            _SectionHeader(
+            SectionHeader(
               icon: Icons.notifications_outlined,
               title: 'RECENT ACTIVITY',
               screenWidth: sw,
@@ -86,7 +86,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             const SizedBox(height: 28),
 
             // ── Location History ──
-            _SectionHeader(
+            SectionHeader(
               icon: Icons.location_on_outlined,
               title: 'LOCATION HISTORY',
               screenWidth: sw,
@@ -168,50 +168,6 @@ class _DateFilterRow extends StatelessWidget {
   }
 }
 
-// ─── Section Header (reused from HomeScreen pattern) ──────────────────
-class _SectionHeader extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final double screenWidth;
-
-  const _SectionHeader({
-    required this.icon,
-    required this.title,
-    required this.screenWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        GradientIcon(icon, size: 28),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GradientText(
-              title,
-              style: TextStyle(
-                fontSize: scaledFontSize(18, screenWidth),
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              height: 3,
-              width: 40,
-              decoration: BoxDecoration(
-                gradient: AppGradients.iconText,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
 
 // ─── Current Location Card ────────────────────────────────────────────
 class _CurrentLocationCard extends StatelessWidget {

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:relapse_flutter/providers/patient_profile_ui_providers.dart';
+import 'package:relapse_flutter/routes.dart';
+import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
-
-final safeZoneIsInsideProvider = StateProvider.autoDispose<bool>((ref) => true);
 
 /// Safe Zone Map screen with status banner, info card, and recenter FAB.
 class SafeZoneMapScreen extends ConsumerStatefulWidget {
@@ -71,31 +72,12 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
     final controller = _mapController;
     if (controller == null) return;
 
-    final bounds = _boundsFromPoints([
+    final bounds = boundsFromPoints([
       _caregiverLocation,
       _patientLocation,
     ]);
     await controller.animateCamera(
       CameraUpdate.newLatLngBounds(bounds, 80),
-    );
-  }
-
-  LatLngBounds _boundsFromPoints(List<LatLng> points) {
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (final point in points.skip(1)) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
-    }
-
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
     );
   }
 
@@ -135,7 +117,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
             ),
             tooltip: 'Edit Safe Zone',
             onPressed: () {
-              Navigator.pushNamed(context, '/safe-zone-config');
+              Navigator.pushNamed(context, Routes.safeZoneConfig);
             },
           ),
         ],
@@ -274,7 +256,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
                       text: 'Modify Safe Zone',
                       icon: Icons.edit,
                       onPressed: () {
-                        Navigator.pushNamed(context, '/safe-zone-config');
+                        Navigator.pushNamed(context, Routes.safeZoneConfig);
                       },
                     ),
                   ],

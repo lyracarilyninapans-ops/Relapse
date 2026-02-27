@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -60,13 +61,13 @@ class HomeScreen extends StatelessWidget {
           onSelected: (value) {
             switch (value) {
               case 'settings':
-                Navigator.pushNamed(context, '/settings');
+                Navigator.pushNamed(context, Routes.settings);
                 break;
               case 'profile':
-                Navigator.pushNamed(context, '/edit-caregiver');
+                Navigator.pushNamed(context, Routes.editCaregiver);
                 break;
               case 'logout':
-                Navigator.pushReplacementNamed(context, '/login');
+                Navigator.pushReplacementNamed(context, Routes.login);
                 break;
             }
           },
@@ -130,7 +131,7 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
           _WatchStatusBanner(connected: true),
           const SizedBox(height: 16),
-          _SectionHeader(
+          SectionHeader(
             icon: Icons.person_outline,
             title: 'PATIENT OVERVIEW',
             screenWidth: sw,
@@ -140,13 +141,13 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 32),
           _QuickStatsRow(screenWidth: sw),
           const SizedBox(height: 32),
-          _SectionHeader(
+          SectionHeader(
             icon: Icons.dashboard_outlined,
             title: 'QUICK ACTIONS',
             screenWidth: sw,
           ),
           const SizedBox(height: 16),
-          _FeatureGrid(screenWidth: sw, context: context),
+          _FeatureGrid(screenWidth: sw),
           const SizedBox(height: 16),
         ],
       ),
@@ -195,7 +196,7 @@ class HomeScreen extends StatelessWidget {
           CtaButton(
             text: 'Add Patient',
             icon: Icons.add_circle_outline,
-            onPressed: () => Navigator.pushNamed(context, '/add-patient'),
+            onPressed: () => Navigator.pushNamed(context, Routes.addPatient),
           ),
         ],
       ),
@@ -265,50 +266,6 @@ class _WatchStatusBanner extends StatelessWidget {
   }
 }
 
-// ─── Section Header ───────────────────────────────────────────────────
-class _SectionHeader extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final double screenWidth;
-
-  const _SectionHeader({
-    required this.icon,
-    required this.title,
-    required this.screenWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        GradientIcon(icon, size: 28),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GradientText(
-              title,
-              style: TextStyle(
-                fontSize: scaledFontSize(18, screenWidth),
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              height: 3,
-              width: 40,
-              decoration: BoxDecoration(
-                gradient: AppGradients.iconText,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
 
 // ─── Patient Overview Card ────────────────────────────────────────────
 class _PatientOverviewCard extends StatelessWidget {
@@ -452,7 +409,7 @@ class _PatientOverviewCard extends StatelessWidget {
               child: IconButton(
                 icon: const Icon(Icons.edit, color: Colors.white, size: 20),
                 onPressed: () {
-                  Navigator.pushNamed(context, '/edit-patient');
+                  Navigator.pushNamed(context, Routes.editPatient);
                 },
               ),
             ),
@@ -560,18 +517,17 @@ class _StatCard extends StatelessWidget {
 // ─── Feature Grid ─────────────────────────────────────────────────────
 class _FeatureGrid extends StatelessWidget {
   final double screenWidth;
-  final BuildContext context;
 
-  const _FeatureGrid({required this.screenWidth, required this.context});
+  const _FeatureGrid({required this.screenWidth});
 
   @override
-  Widget build(BuildContext _) {
+  Widget build(BuildContext context) {
     final features = [
       _FeatureItem(
         icon: Icons.cloud_upload_outlined,
         title: 'Upload Memory Cues',
         subtitle: 'Photos, Audio, Video',
-        onTap: () => Navigator.pushNamed(context, '/memory-reminders'),
+        onTap: () => Navigator.pushNamed(context, Routes.memoryReminders),
       ),
       _FeatureItem(
         icon: Icons.shield_outlined,

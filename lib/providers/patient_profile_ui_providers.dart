@@ -31,3 +31,5 @@ final editCaregiverPhoneProvider =
 final editCaregiverBioProvider = StateProvider.autoDispose<String>(
   (ref) => 'Caring for my father with early-stage dementia.',
 );
+
+final safeZoneIsInsideProvider = StateProvider.autoDispose<bool>((ref) => true);

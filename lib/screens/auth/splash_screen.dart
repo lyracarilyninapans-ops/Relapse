@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:relapse_flutter/routes.dart';
+import 'package:relapse_flutter/theme/app_colors.dart';
 
 /// Splash screen with gradient background, logo, app name, and spinner.
 class SplashScreen extends StatefulWidget {
@@ -18,7 +20,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _navigateToNextScreen() async {
     await Future<void>.delayed(const Duration(seconds: 2));
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    Navigator.pushReplacementNamed(context, Routes.login);
   }
 
   @override
@@ -32,9 +34,9 @@ class _SplashScreenState extends State<SplashScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.blue.shade100,
-              Colors.teal.shade100,
-              Colors.green.shade100,
+              AppColors.gradientStart,
+              AppColors.gradientMiddle,
+              AppColors.gradientEnd,
             ],
           ),
         ),
@@ -52,8 +54,8 @@ class _SplashScreenState extends State<SplashScreen> {
                   errorBuilder: (_, _, _) => Container(
                     width: 200,
                     height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade200,
+                    decoration: const BoxDecoration(
+                      color: AppColors.gradientMiddle,
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -85,7 +87,7 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const SizedBox(height: 48),
               CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.teal.shade400),
+                valueColor: const AlwaysStoppedAnimation<Color>(AppColors.tertiaryColor),
               ),
             ],
           ),

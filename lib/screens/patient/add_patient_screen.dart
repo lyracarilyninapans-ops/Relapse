@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/patient_profile_ui_providers.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -152,7 +153,7 @@ class AddPatientScreen extends ConsumerWidget {
               CtaButton(
                 text: 'Link Patient',
                 onPressed: () {
-                  Navigator.pushReplacementNamed(context, '/patient-setup');
+                  Navigator.pushReplacementNamed(context, Routes.patientSetup);
                 },
               ),
               const SizedBox(height: 24),
