@@ -1,0 +1,24 @@
+{
+	"functions": {
+		"source": "functions"
+	},
+	"flutter": {
+		"platforms": {
+			"android": {
+				"default": {
+					"projectId": "relapse-488712",
+					"appId": "1:578034372605:android:ce1eb37cdd2f38b4649394",
+					"fileOutput": "android/app/google-services.json"
+				}
+			},
+			"dart": {
+				"lib/firebase_options.dart": {
+					"projectId": "relapse-488712",
+					"configurations": {
+						"android": "1:578034372605:android:ce1eb37cdd2f38b4649394"
+					}
+				}
+			}
+		}
+	}
+}
