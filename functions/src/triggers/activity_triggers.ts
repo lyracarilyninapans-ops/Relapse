@@ -86,6 +86,7 @@ export const onActivityRecordForSummary = onDocumentCreated(
       const summarySnap = await txn.get(summaryRef);
       const existing = summarySnap.data() || {
         date: dateStr,
+        patientId: patientId,
         totalEvents: 0,
         safeZoneExits: 0,
         remindersTriggered: 0,
