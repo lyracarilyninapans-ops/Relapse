@@ -7,6 +7,7 @@ import 'routes.dart';
 import 'theme/app_theme.dart';
 import 'screens/screens.dart';
 import 'services/notification_service.dart';
+import 'services/connectivity_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +25,10 @@ Future<void> main() async {
   // Initialize notification service
   final notificationService = FirebaseNotificationService();
   await notificationService.initialize();
+
+  // Initialize connectivity monitoring
+  final connectivityService = ConnectivityPlusService();
+  await connectivityService.initialize();
 
   runApp(const ProviderScope(child: RelapseApp()));
 }

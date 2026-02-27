@@ -7,6 +7,7 @@ import 'package:relapse_flutter/screens/home/home_screen.dart';
 import 'package:relapse_flutter/screens/memory/memory_screen.dart';
 import 'package:relapse_flutter/screens/safe_zone/safe_zone_map_screen.dart';
 import 'package:relapse_flutter/screens/activity/activity_screen.dart';
+import 'package:relapse_flutter/widgets/common/offline_banner.dart';
 import 'package:relapse_flutter/widgets/navigation/custom_bottom_navigation_bar.dart';
 
 /// Main shell screen with IndexedStack and bottom navigation.
@@ -59,13 +60,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
-      body: IndexedStack(
-        index: _currentIndex,
-        children: const [
-          HomeScreen(),
-          MemoryScreen(),
-          SafeZoneMapScreen(),
-          ActivityScreen(),
+      body: Column(
+        children: [
+          const OfflineBanner(),
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: const [
+                HomeScreen(),
+                MemoryScreen(),
+                SafeZoneMapScreen(),
+                ActivityScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: CustomBottomNavigationBar(

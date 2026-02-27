@@ -1,20 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/providers/connectivity_providers.dart';
+import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
-/// Offline Maps Setup screen with instructions and confirmation.
-class OfflineMapsScreen extends StatefulWidget {
+/// Offline Maps Setup screen with instructions, safe zone info, and confirmation.
+class OfflineMapsScreen extends ConsumerStatefulWidget {
   const OfflineMapsScreen({super.key});
 
   @override
-  State<OfflineMapsScreen> createState() => _OfflineMapsScreenState();
+  ConsumerState<OfflineMapsScreen> createState() => _OfflineMapsScreenState();
 }
 
-class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
+class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen> {
   bool _confirmed = false;
 
   @override
   Widget build(BuildContext context) {
+    final primaryZone = ref.watch(primarySafeZoneProvider);
+    final isOnline = ref.watch(isOnlineProvider);
+
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
@@ -64,6 +70,45 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Connectivity status
+            if (!isOnline)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade300),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.cloud_off, color: Colors.orange, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'You are currently offline. Connect to download maps.',
+                        style: TextStyle(fontSize: 13, color: Colors.orange),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Recommended region based on safe zone
+            if (primaryZone != null) ...[
+              _sectionCard(
+                icon: Icons.my_location,
+                title: 'Recommended Region',
+                content:
+                    'Based on your safe zone configuration, download the map area around:\n\n'
+                    'Center: ${primaryZone.centerLat.toStringAsFixed(4)}, '
+                    '${primaryZone.centerLng.toStringAsFixed(4)}\n'
+                    'Radius: ${primaryZone.radiusMeters.round()}m\n\n'
+                    'We recommend downloading at least a 5 km radius around this point.',
+              ),
+              const SizedBox(height: 20),
+            ],
+
             // Why Offline Maps
             _sectionCard(
               icon: Icons.info_outline,
@@ -101,28 +146,24 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
             GradientButtonWithIcon(
               text: 'Open Google Maps',
               icon: Icons.map,
-              onPressed: () {},
-            ),
-            const SizedBox(height: 16),
-
-            // Show Safe Zone in Maps button
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.location_on, color: AppColors.primaryColor),
-                label: const Text(
-                  'Show Safe Zone in Maps',
-                  style: TextStyle(color: AppColors.primaryColor),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppColors.primaryColor),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  minimumSize: const Size(0, 50),
-                ),
-              ),
+              onPressed: () {
+                if (primaryZone != null) {
+                  _showSafeZoneLocationInfo(
+                    context,
+                    primaryZone.centerLat,
+                    primaryZone.centerLng,
+                    primaryZone.radiusMeters,
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'No safe zone configured yet. Set up a safe zone first.',
+                      ),
+                    ),
+                  );
+                }
+              },
             ),
             const SizedBox(height: 24),
 
@@ -208,6 +249,37 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
               fontSize: 14,
               color: Colors.black87,
               height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSafeZoneLocationInfo(
+    BuildContext context,
+    double lat,
+    double lng,
+    double radius,
+  ) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surfaceColor,
+        title: const Text('Safe Zone Location'),
+        content: Text(
+          'Center your offline map download around these coordinates:\n\n'
+          'Latitude: ${lat.toStringAsFixed(6)}\n'
+          'Longitude: ${lng.toStringAsFixed(6)}\n'
+          'Safe zone radius: ${radius.round()}m\n\n'
+          'Download at least a 5 km area around this point in Google Maps.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Got it',
+              style: TextStyle(color: AppColors.primaryColor),
             ),
           ),
         ],
