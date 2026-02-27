@@ -1,19 +1,65 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_ui_providers.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Login screen with logo, email/password form, and gradient button.
-class LoginScreen extends ConsumerWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleSignIn() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    await ref.read(signInProvider.notifier).signIn(
+          _emailController.text,
+          _passwordController.text,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final obscurePassword = ref.watch(loginObscurePasswordProvider);
-    const isLoading = false;
+    final signInState = ref.watch(signInProvider);
+    final isLoading = signInState is AsyncLoading;
+
+    // Listen for sign-in success → navigate
+    ref.listen<AsyncValue<void>>(signInProvider, (previous, next) {
+      next.whenOrNull(
+        data: (_) {
+          if (previous is AsyncLoading) {
+            Navigator.pushReplacementNamed(context, Routes.main);
+          }
+        },
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_authErrorMessage(error)),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+      );
+    });
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -58,13 +104,16 @@ class LoginScreen extends ConsumerWidget {
 
               // Form
               Form(
+                key: _formKey,
                 child: Column(
                   children: [
                     // Email
                     TextFormField(
+                      controller: _emailController,
                       decoration: InputDecoration(
                         hintText: 'Email Address',
-                        hintStyle: TextStyle(color: Colors.black.withAlpha(128)),
+                        hintStyle:
+                            TextStyle(color: Colors.black.withAlpha(128)),
                         prefixIcon: const Icon(
                           Icons.email,
                           color: AppColors.primaryColor,
@@ -83,15 +132,26 @@ class LoginScreen extends ConsumerWidget {
                         ),
                       ),
                       keyboardType: TextInputType.emailAddress,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your email';
+                        }
+                        if (!value.contains('@')) {
+                          return 'Please enter a valid email';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 16),
 
                     // Password
                     TextFormField(
+                      controller: _passwordController,
                       obscureText: obscurePassword,
                       decoration: InputDecoration(
                         hintText: 'Password',
-                        hintStyle: TextStyle(color: Colors.black.withAlpha(128)),
+                        hintStyle:
+                            TextStyle(color: Colors.black.withAlpha(128)),
                         prefixIcon: const Icon(
                           Icons.lock,
                           color: AppColors.primaryColor,
@@ -121,6 +181,12 @@ class LoginScreen extends ConsumerWidget {
                           ),
                         ),
                       ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your password';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 8),
 
@@ -150,10 +216,7 @@ class LoginScreen extends ConsumerWidget {
               GradientButton(
                 text: 'LOG IN',
                 isLoading: isLoading,
-                onPressed: () {
-                  // Placeholder: navigate to main screen
-                  Navigator.pushReplacementNamed(context, Routes.main);
-                },
+                onPressed: isLoading ? null : _handleSignIn,
               ),
 
               const SizedBox(height: 24),
@@ -176,5 +239,23 @@ class LoginScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _authErrorMessage(Object error) {
+    final message = error.toString();
+    if (message.contains('user-not-found')) {
+      return 'No account found with this email.';
+    }
+    if (message.contains('wrong-password') ||
+        message.contains('invalid-credential')) {
+      return 'Incorrect email or password.';
+    }
+    if (message.contains('too-many-requests')) {
+      return 'Too many attempts. Please try again later.';
+    }
+    if (message.contains('network-request-failed')) {
+      return 'Network error. Please check your connection.';
+    }
+    return 'Sign in failed. Please try again.';
   }
 }

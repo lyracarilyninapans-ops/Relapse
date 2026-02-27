@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_ui_providers.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -22,9 +23,45 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     super.dispose();
   }
 
+  Future<void> _handleSendReset() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter your email address.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    await ref.read(forgotPasswordProvider.notifier).sendResetEmail(email);
+  }
+
   @override
   Widget build(BuildContext context) {
     final emailSent = ref.watch(forgotPasswordEmailSentProvider);
+    final resetState = ref.watch(forgotPasswordProvider);
+    final isLoading = resetState is AsyncLoading;
+
+    // Listen for reset success → toggle to success view
+    ref.listen<AsyncValue<void>>(forgotPasswordProvider, (previous, next) {
+      next.whenOrNull(
+        data: (_) {
+          if (previous is AsyncLoading) {
+            ref.read(forgotPasswordEmailSentProvider.notifier).state = true;
+          }
+        },
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_resetErrorMessage(error)),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+      );
+    });
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -39,19 +76,22 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: emailSent ? _buildSuccessView() : _buildFormView(),
+          child: emailSent
+              ? _buildSuccessView()
+              : _buildFormView(isLoading: isLoading),
         ),
       ),
     );
   }
 
-  Widget _buildFormView() {
+  Widget _buildFormView({required bool isLoading}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Center(
-          child: Icon(Icons.lock_reset, size: 80, color: AppColors.primaryColor),
+          child:
+              Icon(Icons.lock_reset, size: 80, color: AppColors.primaryColor),
         ),
         const SizedBox(height: 24),
         const GradientText(
@@ -76,7 +116,8 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
           decoration: InputDecoration(
             hintText: 'Email Address',
             hintStyle: TextStyle(color: Colors.black.withAlpha(128)),
-            prefixIcon: const Icon(Icons.email, color: AppColors.primaryColor),
+            prefixIcon:
+                const Icon(Icons.email, color: AppColors.primaryColor),
             filled: true,
             fillColor: AppColors.surfaceColor,
             border: OutlineInputBorder(
@@ -96,9 +137,8 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
 
         GradientButton(
           text: 'SEND RESET LINK',
-          onPressed: () {
-            ref.read(forgotPasswordEmailSentProvider.notifier).state = true;
-          },
+          isLoading: isLoading,
+          onPressed: isLoading ? null : _handleSendReset,
         ),
       ],
     );
@@ -203,5 +243,19 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
         ),
       ],
     );
+  }
+
+  String _resetErrorMessage(Object error) {
+    final message = error.toString();
+    if (message.contains('user-not-found')) {
+      return 'No account found with this email.';
+    }
+    if (message.contains('invalid-email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (message.contains('network-request-failed')) {
+      return 'Network error. Please check your connection.';
+    }
+    return 'Failed to send reset email. Please try again.';
   }
 }

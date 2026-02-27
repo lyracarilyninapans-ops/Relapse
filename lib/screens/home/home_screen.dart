@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
@@ -6,26 +8,33 @@ import 'package:relapse_flutter/theme/responsive.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Home screen with patient overview, quick stats, and feature grid.
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends ConsumerWidget {
   /// Set to true to show the "no patient linked" state.
   final bool hasPatient;
 
   const HomeScreen({super.key, this.hasPatient = true});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final sw = MediaQuery.of(context).size.width;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
-      appBar: _buildAppBar(context),
+      appBar: _buildAppBar(context, ref),
       body: hasPatient
           ? _buildWithPatient(context, sw)
           : _buildNoPatient(context, sw),
     );
   }
 
-  PreferredSizeWidget _buildAppBar(BuildContext context) {
+  PreferredSizeWidget _buildAppBar(BuildContext context, WidgetRef ref) {
+    final authUser = ref.watch(authStateProvider).valueOrNull;
+    final initial = (authUser?.displayName?.isNotEmpty == true)
+        ? authUser!.displayName![0].toUpperCase()
+        : (authUser?.email.isNotEmpty == true)
+            ? authUser!.email[0].toUpperCase()
+            : '?';
+
     return AppBar(
       backgroundColor: AppColors.backgroundColor,
       elevation: 0,
@@ -58,7 +67,7 @@ class HomeScreen extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          onSelected: (value) {
+          onSelected: (value) async {
             switch (value) {
               case 'settings':
                 Navigator.pushNamed(context, Routes.settings);
@@ -67,7 +76,14 @@ class HomeScreen extends StatelessWidget {
                 Navigator.pushNamed(context, Routes.editCaregiver);
                 break;
               case 'logout':
-                Navigator.pushReplacementNamed(context, Routes.login);
+                await ref.read(authServiceProvider).signOut();
+                if (context.mounted) {
+                  Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    Routes.login,
+                    (route) => false,
+                  );
+                }
                 break;
             }
           },
@@ -107,9 +123,9 @@ class HomeScreen extends StatelessWidget {
           child: CircleAvatar(
             backgroundColor: AppColors.primaryColor,
             radius: 18,
-            child: const Text(
-              'J',
-              style: TextStyle(
+            child: Text(
+              initial,
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
               ),

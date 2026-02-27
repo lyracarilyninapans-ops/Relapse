@@ -1,13 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_ui_providers.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Sign Up screen with name, email, password, confirm, terms checkbox.
-class SignUpScreen extends ConsumerWidget {
+class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
+
+  @override
+  ConsumerState<SignUpScreen> createState() => _SignUpScreenState();
+}
+
+class _SignUpScreenState extends ConsumerState<SignUpScreen> {
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
 
   static double _passwordStrength(String password) {
     if (password.isEmpty) return 0;
@@ -129,8 +151,46 @@ class SignUpScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _handleSignUp() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final agreedToTerms = ref.read(signUpAgreedToTermsProvider);
+    if (!agreedToTerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please agree to the Terms of Service and Privacy Policy.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    await ref.read(signUpProvider.notifier).signUp(
+          _emailController.text,
+          _passwordController.text,
+          _nameController.text,
+        );
+  }
+
+  String _authErrorMessage(Object error) {
+    final message = error.toString();
+    if (message.contains('email-already-in-use')) {
+      return 'An account with this email already exists.';
+    }
+    if (message.contains('weak-password')) {
+      return 'Password is too weak. Use at least 6 characters.';
+    }
+    if (message.contains('invalid-email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (message.contains('network-request-failed')) {
+      return 'Network error. Please check your connection.';
+    }
+    return 'Sign up failed. Please try again.';
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final obscurePassword = ref.watch(signUpObscurePasswordProvider);
     final obscureConfirm = ref.watch(signUpObscureConfirmProvider);
     final agreedToTerms = ref.watch(signUpAgreedToTermsProvider);
@@ -138,7 +198,31 @@ class SignUpScreen extends ConsumerWidget {
     final passwordStrength = _passwordStrength(password);
     final strengthLabel = _strengthLabel(passwordStrength);
     final strengthColor = _strengthColor(passwordStrength);
-    const isLoading = false;
+    final signUpState = ref.watch(signUpProvider);
+    final isLoading = signUpState is AsyncLoading;
+
+    // Listen for sign-up success → navigate to main
+    ref.listen<AsyncValue<void>>(signUpProvider, (previous, next) {
+      next.whenOrNull(
+        data: (_) {
+          if (previous is AsyncLoading) {
+            Navigator.pushNamedAndRemoveUntil(
+              context,
+              Routes.main,
+              (route) => false,
+            );
+          }
+        },
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_authErrorMessage(error)),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+      );
+    });
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -190,30 +274,49 @@ class SignUpScreen extends ConsumerWidget {
 
               // Form
               Form(
+                key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Full Name
                     TextFormField(
+                      controller: _nameController,
                       decoration: _inputDecoration(
                         hint: 'Full Name',
                         prefixIcon: Icons.person,
                       ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your name';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 16),
 
                     // Email
                     TextFormField(
+                      controller: _emailController,
                       decoration: _inputDecoration(
                         hint: 'Email Address',
                         prefixIcon: Icons.email,
                       ),
                       keyboardType: TextInputType.emailAddress,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your email';
+                        }
+                        if (!value.contains('@')) {
+                          return 'Please enter a valid email';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 16),
 
                     // Password
                     TextFormField(
+                      controller: _passwordController,
                       obscureText: obscurePassword,
                       onChanged: (value) {
                         ref.read(signUpPasswordProvider.notifier).state = value;
@@ -234,6 +337,15 @@ class SignUpScreen extends ConsumerWidget {
                           },
                         ),
                       ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter a password';
+                        }
+                        if (value.length < 6) {
+                          return 'Password must be at least 6 characters';
+                        }
+                        return null;
+                      },
                     ),
 
                     // Password strength indicator
@@ -267,6 +379,7 @@ class SignUpScreen extends ConsumerWidget {
 
                     // Confirm Password
                     TextFormField(
+                      controller: _confirmController,
                       obscureText: obscureConfirm,
                       decoration: _inputDecoration(
                         hint: 'Confirm Password',
@@ -284,6 +397,12 @@ class SignUpScreen extends ConsumerWidget {
                           },
                         ),
                       ),
+                      validator: (value) {
+                        if (value != _passwordController.text) {
+                          return 'Passwords do not match';
+                        }
+                        return null;
+                      },
                     ),
                   ],
                 ),
@@ -345,27 +464,7 @@ class SignUpScreen extends ConsumerWidget {
               GradientButton(
                 text: 'SIGN UP',
                 isLoading: isLoading,
-                onPressed: () {
-                  // Placeholder: show success and navigate to login
-                  showDialog(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text('Account Created!'),
-                      content: const Text(
-                        'Your account has been created successfully.',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pop(context); // close dialog
-                            Navigator.pop(context); // back to login
-                          },
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                onPressed: isLoading ? null : _handleSignUp,
               ),
 
               const SizedBox(height: 24),
