@@ -22,12 +22,13 @@ export interface SafeZoneEventData {
 export interface WatchStatus {
   isConnected: boolean;
   batteryLevel?: number;
-  lastSeen?: FirebaseFirestore.Timestamp;
-  pairedWatchId?: string;
+  lastSyncTimestamp?: FirebaseFirestore.Timestamp;
+  watchId?: string;
 }
 
 export interface DailySummary {
   date: string;
+  patientId: string;
   totalEvents: number;
   safeZoneExits: number;
   remindersTriggered: number;
@@ -35,6 +36,10 @@ export interface DailySummary {
   activeMinutes: number;
   placesVisited: number;
   updatedAt: FirebaseFirestore.Timestamp;
+  /** Internal computation fields — used by Cloud Functions only */
+  visitedCells?: string[];
+  lastLat?: number;
+  lastLng?: number;
 }
 
 export interface DeviceRecord {
