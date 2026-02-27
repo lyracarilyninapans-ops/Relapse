@@ -1,94 +1,108 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:relapse_flutter/models/memory_reminder.dart';
+import 'package:relapse_flutter/providers/activity_providers.dart';
+import 'package:relapse_flutter/providers/memory_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
-/// Memory map screen with search toggle, placeholder map, and FAB.
-class MemoryScreen extends StatefulWidget {
+/// Memory map screen with search toggle, real memory markers, and FAB.
+class MemoryScreen extends ConsumerStatefulWidget {
   const MemoryScreen({super.key});
 
   @override
-  State<MemoryScreen> createState() => _MemoryScreenState();
+  ConsumerState<MemoryScreen> createState() => _MemoryScreenState();
 }
 
-class _MemoryScreenState extends State<MemoryScreen> {
+class _MemoryScreenState extends ConsumerState<MemoryScreen> {
   bool _isSearching = false;
   final _searchController = TextEditingController();
   GoogleMapController? _mapController;
-
-  static const LatLng _caregiverLocation = LatLng(37.7735, -122.4210);
-  static const LatLng _patientLocation = LatLng(37.7763, -122.4177);
-
-  // Placeholder data
-  final _hasMemories = true;
-  final List<String> _searchResults = <String>[
-    'Home - Living Room',
-    'Park - East Entrance',
-    'Grocery Store',
-  ];
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 13.2,
   );
 
-  final Map<String, LatLng> _memoryLocations = const {
-    'Home - Living Room': LatLng(37.7749, -122.4194),
-    'Park - East Entrance': LatLng(37.7694, -122.4862),
-    'Grocery Store': LatLng(37.7841, -122.4075),
-  };
+  Set<Marker> _buildMarkers(
+      List<MemoryReminder> reminders, LatLng? patientPos) {
+    final markers = <Marker>{};
 
-  Set<Marker> get _memoryMarkers => _memoryLocations.entries
-      .map(
-        (entry) => Marker(
-          markerId: MarkerId(entry.key),
-          position: entry.value,
-          infoWindow: InfoWindow(title: entry.key),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueAzure,
-          ),
-        ),
-      )
-      .toSet();
+    for (final reminder in reminders) {
+      if (reminder.latitude != null && reminder.longitude != null) {
+        markers.add(Marker(
+          markerId: MarkerId('memory_${reminder.id}'),
+          position: LatLng(reminder.latitude!, reminder.longitude!),
+          infoWindow: InfoWindow(title: reminder.title),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        ));
+      }
+    }
 
-  Set<Marker> get _contextMarkers => {
-    Marker(
-      markerId: const MarkerId('caregiver_location'),
-      position: _caregiverLocation,
-      infoWindow: const InfoWindow(title: 'Caregiver'),
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
-    ),
-    Marker(
-      markerId: const MarkerId('patient_location'),
-      position: _patientLocation,
-      infoWindow: const InfoWindow(title: 'Patient'),
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-    ),
-  };
+    if (patientPos != null) {
+      final patientName =
+          ref.read(selectedPatientProvider)?.name ?? 'Patient';
+      markers.add(Marker(
+        markerId: const MarkerId('patient_location'),
+        position: patientPos,
+        infoWindow: InfoWindow(title: patientName),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      ));
+    }
 
-  Set<Marker> get _allMarkers => {
-    ...(_hasMemories ? _memoryMarkers : const <Marker>{}),
-    ..._contextMarkers,
-  };
-
-  Future<void> _focusMemory(String memoryName) async {
-    final controller = _mapController;
-    final position = _memoryLocations[memoryName];
-    if (controller == null || position == null) return;
-
-    await controller.animateCamera(CameraUpdate.newLatLng(position));
+    return markers;
   }
 
-  Future<void> _centerOnPatientAndCaregiver() async {
-    final controller = _mapController;
-    if (controller == null) return;
+  Set<Circle> _buildCircles(List<MemoryReminder> reminders) {
+    return reminders
+        .where((r) => r.latitude != null && r.longitude != null)
+        .map((r) => Circle(
+              circleId: CircleId('memory_radius_${r.id}'),
+              center: LatLng(r.latitude!, r.longitude!),
+              radius: r.radiusMeters,
+              strokeColor: AppColors.primaryColor.withAlpha(128),
+              strokeWidth: 1,
+              fillColor: AppColors.primaryColor.withAlpha(26),
+            ))
+        .toSet();
+  }
 
-    final points = <LatLng>[_caregiverLocation, _patientLocation];
-    final bounds = boundsFromPoints(points);
-    await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  Future<void> _focusReminder(MemoryReminder reminder) async {
+    if (_mapController == null ||
+        reminder.latitude == null ||
+        reminder.longitude == null) return;
+    await _mapController!.animateCamera(
+      CameraUpdate.newLatLng(LatLng(reminder.latitude!, reminder.longitude!)),
+    );
+  }
+
+  Future<void> _centerOnAll(
+      List<MemoryReminder> reminders, LatLng? patientPos) async {
+    if (_mapController == null) return;
+
+    final points = <LatLng>[];
+    for (final r in reminders) {
+      if (r.latitude != null && r.longitude != null) {
+        points.add(LatLng(r.latitude!, r.longitude!));
+      }
+    }
+    if (patientPos != null) points.add(patientPos);
+
+    if (points.isEmpty) return;
+    if (points.length == 1) {
+      await _mapController!
+          .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
+    } else {
+      final bounds = boundsFromPoints(points);
+      await _mapController!
+          .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    }
   }
 
   @override
@@ -100,6 +114,23 @@ class _MemoryScreenState extends State<MemoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final reminders = ref.watch(activeMemoryRemindersProvider);
+    final liveLocation = ref.watch(liveLocationProvider);
+    final hasMemories = reminders.isNotEmpty;
+
+    final patientPos = liveLocation.whenOrNull(
+      data: (record) => record != null && record.latitude != null
+          ? LatLng(record.latitude!, record.longitude!)
+          : null,
+    );
+
+    final query = _searchController.text.toLowerCase();
+    final filteredReminders = query.isEmpty
+        ? reminders
+        : reminders
+            .where((r) => r.title.toLowerCase().contains(query))
+            .toList();
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.backgroundColor,
@@ -139,7 +170,8 @@ class _MemoryScreenState extends State<MemoryScreen> {
           GoogleMap(
             initialCameraPosition: _initialCameraPosition,
             onMapCreated: (controller) => _mapController = controller,
-            markers: _allMarkers,
+            markers: _buildMarkers(reminders, patientPos),
+            circles: _buildCircles(reminders),
             compassEnabled: true,
             zoomControlsEnabled: false,
             scrollGesturesEnabled: true,
@@ -151,7 +183,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
           ),
 
           // Empty state overlay
-          if (!_hasMemories)
+          if (!hasMemories)
             Center(
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 32),
@@ -172,17 +204,18 @@ class _MemoryScreenState extends State<MemoryScreen> {
                     Text(
                       'No memories added yet',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.bold,
-                      ),
+                            color: Colors.grey[700],
+                            fontWeight: FontWeight.bold,
+                          ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Tap the + button to add your first memory',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: Colors.grey[600]),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -191,7 +224,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
             ),
 
           // Search results overlay
-          if (_isSearching && _searchController.text.isNotEmpty)
+          if (_isSearching && query.isNotEmpty)
             Positioned(
               top: 0,
               left: 8,
@@ -208,21 +241,26 @@ class _MemoryScreenState extends State<MemoryScreen> {
                     ),
                   ],
                 ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  itemCount: _searchResults.length.clamp(0, 5),
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (_, i) => ListTile(
-                    leading: const Icon(Icons.location_on, color: Colors.blue),
-                    title: Text(_searchResults[i]),
-                    onTap: () async {
-                      final selectedMemory = _searchResults[i];
-                      setState(() => _isSearching = false);
-                      await _focusMemory(selectedMemory);
-                    },
-                  ),
-                ),
+                child: filteredReminders.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('No matches found'),
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        padding: EdgeInsets.zero,
+                        itemCount: filteredReminders.length.clamp(0, 5),
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) => ListTile(
+                          leading: const Icon(Icons.location_on,
+                              color: Colors.blue),
+                          title: Text(filteredReminders[i].title),
+                          onTap: () {
+                            setState(() => _isSearching = false);
+                            _focusReminder(filteredReminders[i]);
+                          },
+                        ),
+                      ),
               ),
             ),
         ],
@@ -234,7 +272,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
           FloatingActionButton.small(
             heroTag: 'memory_center_fab',
             backgroundColor: AppColors.surfaceColor,
-            onPressed: _centerOnPatientAndCaregiver,
+            onPressed: () => _centerOnAll(reminders, patientPos),
             child: const Icon(
               Icons.center_focus_strong,
               color: AppColors.primaryColor,
