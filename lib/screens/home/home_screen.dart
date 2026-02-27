@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
@@ -9,20 +12,19 @@ import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Home screen with patient overview, quick stats, and feature grid.
 class HomeScreen extends ConsumerWidget {
-  /// Set to true to show the "no patient linked" state.
-  final bool hasPatient;
-
-  const HomeScreen({super.key, this.hasPatient = true});
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sw = MediaQuery.of(context).size.width;
+    final patient = ref.watch(selectedPatientProvider);
+    final hasPatient = patient != null;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
       appBar: _buildAppBar(context, ref),
       body: hasPatient
-          ? _buildWithPatient(context, sw)
+          ? _buildWithPatient(context, sw, ref)
           : _buildNoPatient(context, sw),
     );
   }
@@ -138,14 +140,14 @@ class HomeScreen extends ConsumerWidget {
   }
 
   // ─── With patient linked ──────────────────────────────────────────
-  Widget _buildWithPatient(BuildContext context, double sw) {
+  Widget _buildWithPatient(BuildContext context, double sw, WidgetRef ref) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
-          _WatchStatusBanner(connected: true),
+          const _WatchStatusBanner(),
           const SizedBox(height: 16),
           SectionHeader(
             icon: Icons.person_outline,
@@ -221,19 +223,21 @@ class HomeScreen extends ConsumerWidget {
 }
 
 // ─── Watch Status Banner ──────────────────────────────────────────────
-class _WatchStatusBanner extends StatelessWidget {
-  final bool connected;
-  const _WatchStatusBanner({required this.connected});
+class _WatchStatusBanner extends ConsumerWidget {
+  const _WatchStatusBanner();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connected = ref.watch(watchConnectedProvider);
+    final battery = ref.watch(watchBatteryProvider);
+
     final baseColor = connected
         ? AppColors.watchConnected
         : AppColors.watchDisconnected;
     final icon = connected ? Icons.watch : Icons.watch_off;
     final title = connected ? 'Watch Connected' : 'Watch Offline';
     final message = connected
-        ? 'Patient device is online and reporting.'
+        ? 'Patient device is online and reporting.${battery != null ? ' Battery: $battery%' : ''}'
         : 'Patient device is not reachable.';
 
     return Container(
@@ -284,12 +288,43 @@ class _WatchStatusBanner extends StatelessWidget {
 
 
 // ─── Patient Overview Card ────────────────────────────────────────────
-class _PatientOverviewCard extends StatelessWidget {
+class _PatientOverviewCard extends ConsumerWidget {
   final double screenWidth;
   const _PatientOverviewCard({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final patient = ref.watch(selectedPatientProvider);
+    final szStatus = ref.watch(safeZoneStatusProvider);
+    final liveLocation = ref.watch(liveLocationProvider);
+
+    final name = patient?.name ?? 'Unknown';
+    final initials = name.isNotEmpty
+        ? name.split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase()
+        : '?';
+
+    final updatedText = liveLocation.when(
+      data: (record) {
+        if (record == null) return 'No location data';
+        final diff = DateTime.now().difference(record.timestamp);
+        if (diff.inMinutes < 1) return 'Updated just now';
+        if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+        return '${diff.inHours}h ago';
+      },
+      loading: () => 'Loading...',
+      error: (_, __) => 'Unavailable',
+    );
+
+    final isInside = szStatus == SafeZoneStatus.inside;
+    final szLabel = switch (szStatus) {
+      SafeZoneStatus.inside => 'Inside Safe Zone',
+      SafeZoneStatus.outside => 'Outside Safe Zone',
+      SafeZoneStatus.unknown => 'Status Unknown',
+    };
+    final szColors = isInside
+        ? [AppColors.safeZoneInsideStart, AppColors.safeZoneInsideEnd]
+        : [AppColors.safeZoneOutsideStart, AppColors.safeZoneOutsideEnd];
+
     final avatarSize = (screenWidth * 0.20).clamp(64.0, 140.0);
 
     return Container(
@@ -322,7 +357,7 @@ class _PatientOverviewCard extends StatelessWidget {
                 ),
                 child: Center(
                   child: Text(
-                    'JD',
+                    initials,
                     style: TextStyle(
                       fontSize: avatarSize * 0.35,
                       fontWeight: FontWeight.bold,
@@ -340,7 +375,7 @@ class _PatientOverviewCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'John Doe',
+                    name,
                     style: TextStyle(
                       fontSize: scaledFontSize(20, screenWidth),
                       fontWeight: FontWeight.bold,
@@ -357,7 +392,7 @@ class _PatientOverviewCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '5 min ago',
+                        updatedText,
                         style: TextStyle(
                           fontSize: scaledFontSize(12, screenWidth),
                           color: Colors.grey[600],
@@ -373,16 +408,11 @@ class _PatientOverviewCard extends StatelessWidget {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [
-                          AppColors.safeZoneInsideStart,
-                          AppColors.safeZoneInsideEnd,
-                        ],
-                      ),
+                      gradient: LinearGradient(colors: szColors),
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.safeZoneInsideStart.withAlpha(102),
+                          color: szColors.first.withAlpha(102),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
@@ -400,9 +430,9 @@ class _PatientOverviewCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'Inside Safe Zone',
-                          style: TextStyle(
+                        Text(
+                          szLabel,
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
@@ -437,17 +467,32 @@ class _PatientOverviewCard extends StatelessWidget {
 }
 
 // ─── Quick Stats Row ──────────────────────────────────────────────────
-class _QuickStatsRow extends StatelessWidget {
+class _QuickStatsRow extends ConsumerWidget {
   final double screenWidth;
   const _QuickStatsRow({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summary = ref.watch(dailySummaryProvider);
+
+    final activityCount = summary.when(
+      data: (s) => s?.totalEvents.toString() ?? '0',
+      loading: () => '...',
+      error: (_, __) => '--',
+    );
+
+    final safeZonesAsync = ref.watch(safeZoneConfigProvider);
+    final safeZoneCount = safeZonesAsync.when(
+      data: (zones) => zones.length.toString(),
+      loading: () => '...',
+      error: (_, __) => '--',
+    );
+
     return Row(
       children: [
         _StatCard(
           icon: Icons.photo_library_outlined,
-          count: '12',
+          count: '--',
           label: 'Memories',
           color: AppColors.gradientStart,
           screenWidth: screenWidth,
@@ -455,7 +500,7 @@ class _QuickStatsRow extends StatelessWidget {
         const SizedBox(width: 12),
         _StatCard(
           icon: Icons.show_chart_outlined,
-          count: '8',
+          count: activityCount,
           label: 'Activity',
           color: AppColors.gradientMiddle,
           screenWidth: screenWidth,
@@ -463,7 +508,7 @@ class _QuickStatsRow extends StatelessWidget {
         const SizedBox(width: 12),
         _StatCard(
           icon: Icons.location_on_outlined,
-          count: '2',
+          count: safeZoneCount,
           label: 'Safe Zones',
           color: AppColors.gradientEnd,
           screenWidth: screenWidth,
@@ -549,7 +594,7 @@ class _FeatureGrid extends StatelessWidget {
         icon: Icons.shield_outlined,
         title: 'Set Safe Zone',
         subtitle: 'Define Geo-Boundary',
-        onTap: () {},
+        onTap: () => Navigator.pushNamed(context, Routes.safeZoneConfig),
       ),
       _FeatureItem(
         icon: Icons.show_chart_outlined,

@@ -17,48 +17,22 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  // Placeholder: set to true when patient is linked
-  final bool _hasPatient = true;
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
       body: IndexedStack(
         index: _currentIndex,
-        children: [
-          const HomeScreen(hasPatient: true),
-          const MemoryScreen(),
-          _hasPatient
-              ? const SafeZoneMapScreen()
-              : _buildNoPatientPlaceholder(),
-          const ActivityScreen(),
+        children: const [
+          HomeScreen(),
+          MemoryScreen(),
+          SafeZoneMapScreen(),
+          ActivityScreen(),
         ],
       ),
       bottomNavigationBar: CustomBottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
-      ),
-    );
-  }
-
-  Widget _buildNoPatientPlaceholder() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.shield_outlined, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          const Text(
-            'No Patient Linked',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Link a patient to access safe zone features.',
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-          ),
-        ],
       ),
     );
   }
