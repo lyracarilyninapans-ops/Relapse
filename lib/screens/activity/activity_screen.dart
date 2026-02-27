@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:relapse_flutter/models/activity_record.dart';
 import 'package:relapse_flutter/providers/activity_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -16,6 +17,23 @@ class ActivityScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sw = MediaQuery.of(context).size.width;
+    final patient = ref.watch(selectedPatientProvider);
+
+    if (patient == null) {
+      return Scaffold(
+        backgroundColor: AppColors.backgroundColor,
+        appBar: AppBar(
+          backgroundColor: AppColors.backgroundColor,
+          elevation: 0,
+          title: const GradientText(
+            'Activity',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: const NoPatientLinkedView(featureLabel: 'activity monitoring'),
+      );
+    }
+
     final filter = ref.watch(selectedDateRangeFilterProvider);
 
     return Scaffold(

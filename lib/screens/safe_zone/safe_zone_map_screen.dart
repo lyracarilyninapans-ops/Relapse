@@ -93,9 +93,25 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
   @override
   Widget build(BuildContext context) {
     final patient = ref.watch(selectedPatientProvider);
+
+    if (patient == null) {
+      return Scaffold(
+        backgroundColor: AppColors.backgroundColor,
+        appBar: AppBar(
+          backgroundColor: AppColors.backgroundColor,
+          elevation: 0,
+          title: const GradientText(
+            'Safe Zone Map',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: const NoPatientLinkedView(featureLabel: 'safe zone monitoring'),
+      );
+    }
+
     final szStatus = ref.watch(safeZoneStatusProvider);
     final isInside = szStatus == SafeZoneStatus.inside;
-    final patientName = patient?.name ?? 'Patient';
+    final patientName = patient.name;
 
     final liveLocation = ref.watch(liveLocationProvider);
     final primaryZone = ref.watch(primarySafeZoneProvider);

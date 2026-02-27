@@ -114,6 +114,23 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final patient = ref.watch(selectedPatientProvider);
+
+    if (patient == null) {
+      return Scaffold(
+        backgroundColor: AppColors.backgroundColor,
+        appBar: AppBar(
+          backgroundColor: AppColors.backgroundColor,
+          elevation: 0,
+          title: const GradientText(
+            'Memories',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: const NoPatientLinkedView(featureLabel: 'memory cues'),
+      );
+    }
+
     final reminders = ref.watch(activeMemoryRemindersProvider);
     final liveLocation = ref.watch(liveLocationProvider);
     final hasMemories = reminders.isNotEmpty;

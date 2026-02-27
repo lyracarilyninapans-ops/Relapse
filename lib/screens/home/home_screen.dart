@@ -198,7 +198,7 @@ class HomeScreen extends ConsumerWidget {
             child: const Icon(
               Icons.person_add_outlined,
               size: 80,
-              color: AppColors.gradientMiddle,
+              color: Colors.white,
             ),
           ),
           const SizedBox(height: 32),
