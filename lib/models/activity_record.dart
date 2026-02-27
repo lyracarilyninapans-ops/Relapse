@@ -6,7 +6,44 @@ enum ActivityEventType {
   safeZoneExit,
   reminderTriggered,
   watchDisconnected,
-  watchReconnected,
+  watchReconnected;
+
+  /// Snake_case string used by the watch and Cloud Functions.
+  String get firestoreValue {
+    switch (this) {
+      case ActivityEventType.locationUpdate:
+        return 'location_update';
+      case ActivityEventType.safeZoneEnter:
+        return 'safe_zone_enter';
+      case ActivityEventType.safeZoneExit:
+        return 'safe_zone_exit';
+      case ActivityEventType.reminderTriggered:
+        return 'reminder_triggered';
+      case ActivityEventType.watchDisconnected:
+        return 'watch_disconnected';
+      case ActivityEventType.watchReconnected:
+        return 'watch_reconnected';
+    }
+  }
+
+  static ActivityEventType fromFirestore(String value) {
+    switch (value) {
+      case 'location_update':
+        return ActivityEventType.locationUpdate;
+      case 'safe_zone_enter':
+        return ActivityEventType.safeZoneEnter;
+      case 'safe_zone_exit':
+        return ActivityEventType.safeZoneExit;
+      case 'reminder_triggered':
+        return ActivityEventType.reminderTriggered;
+      case 'watch_disconnected':
+        return ActivityEventType.watchDisconnected;
+      case 'watch_reconnected':
+        return ActivityEventType.watchReconnected;
+      default:
+        return ActivityEventType.locationUpdate;
+    }
+  }
 }
 
 class ActivityRecord {
@@ -35,10 +72,7 @@ class ActivityRecord {
       timestamp: (json['timestamp'] as Timestamp).toDate(),
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
-      eventType: ActivityEventType.values.firstWhere(
-        (e) => e.name == json['eventType'],
-        orElse: () => ActivityEventType.locationUpdate,
-      ),
+      eventType: ActivityEventType.fromFirestore(json['eventType'] as String),
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
@@ -50,7 +84,7 @@ class ActivityRecord {
       'timestamp': Timestamp.fromDate(timestamp),
       'latitude': latitude,
       'longitude': longitude,
-      'eventType': eventType.name,
+      'eventType': eventType.firestoreValue,
       'metadata': metadata,
     };
   }

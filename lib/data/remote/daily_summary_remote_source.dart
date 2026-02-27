@@ -27,7 +27,7 @@ class DailySummaryRemoteSource {
       String uid, String patientId, DateTime date) async {
     final doc = await _summaryDoc(uid, patientId, _dateKey(date)).get();
     if (!doc.exists || doc.data() == null) return null;
-    return DailySummary.fromJson({...doc.data()!, 'id': doc.id});
+    return DailySummary.fromJson({...doc.data()!, 'id': doc.id, 'date': doc.id, 'patientId': patientId});
   }
 
   /// Real-time stream of daily summary updates.
@@ -37,7 +37,7 @@ class DailySummaryRemoteSource {
         .snapshots()
         .map((doc) {
       if (!doc.exists || doc.data() == null) return null;
-      return DailySummary.fromJson({...doc.data()!, 'id': doc.id});
+      return DailySummary.fromJson({...doc.data()!, 'id': doc.id, 'date': doc.id, 'patientId': patientId});
     });
   }
 }

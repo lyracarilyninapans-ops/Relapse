@@ -33,7 +33,7 @@ class ActivityRemoteSource {
   /// Stream of the latest location update record.
   Stream<ActivityRecord?> watchLatestLocation(String uid, String patientId) {
     return _activityCollection(uid, patientId)
-        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.name)
+        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.firestoreValue)
         .orderBy('timestamp', descending: true)
         .limit(1)
         .snapshots()
@@ -63,7 +63,7 @@ class ActivityRemoteSource {
   Future<List<ActivityRecord>> getLocationHistory(
       String uid, String patientId, DateTime start, DateTime end) async {
     final snapshot = await _activityCollection(uid, patientId)
-        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.name)
+        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.firestoreValue)
         .where('timestamp',
             isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(end))
