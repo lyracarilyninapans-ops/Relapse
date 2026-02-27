@@ -3,6 +3,8 @@ import 'package:relapse_flutter/data/remote/activity_remote_source.dart';
 import 'package:relapse_flutter/data/remote/daily_summary_remote_source.dart';
 import 'package:relapse_flutter/data/remote/patient_remote_source.dart';
 import 'package:relapse_flutter/data/remote/safe_zone_remote_source.dart';
+import 'package:relapse_flutter/data/remote/user_remote_source.dart';
+import 'package:relapse_flutter/models/caregiver_profile.dart';
 import 'package:relapse_flutter/models/patient.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/repositories/activity_repository.dart';
@@ -25,6 +27,10 @@ final patientRemoteSourceProvider = Provider<PatientRemoteSource>((ref) {
 
 final safeZoneRemoteSourceProvider = Provider<SafeZoneRemoteSource>((ref) {
   return SafeZoneRemoteSource();
+});
+
+final userRemoteSourceProvider = Provider<UserRemoteSource>((ref) {
+  return UserRemoteSource();
 });
 
 // ─── Repository Provider ────────────────────────────────────────────────
@@ -67,4 +73,13 @@ final selectedPatientProvider = Provider<Patient?>((ref) {
   } catch (_) {
     return patients.isNotEmpty ? patients.first : null;
   }
+});
+
+// ─── Caregiver Profile Provider ─────────────────────────────────────────
+
+/// Stream of the current caregiver's profile.
+final caregiverProfileProvider = StreamProvider<CaregiverProfile?>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
+  if (authUser == null) return const Stream.empty();
+  return ref.watch(userRemoteSourceProvider).watchProfile(authUser.uid);
 });

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:relapse_flutter/providers/patient_profile_ui_providers.dart';
+import 'package:relapse_flutter/providers/activity_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
@@ -9,10 +11,7 @@ import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Safe Zone Map screen with status banner, info card, and recenter FAB.
 class SafeZoneMapScreen extends ConsumerStatefulWidget {
-  /// Whether the patient is inside the safe zone (placeholder).
-  final bool isInside;
-
-  const SafeZoneMapScreen({super.key, this.isInside = true});
+  const SafeZoneMapScreen({super.key});
 
   @override
   ConsumerState<SafeZoneMapScreen> createState() => _SafeZoneMapScreenState();
@@ -21,72 +20,68 @@ class SafeZoneMapScreen extends ConsumerStatefulWidget {
 class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
   GoogleMapController? _mapController;
 
-  static const LatLng _caregiverLocation = LatLng(37.7735, -122.4210);
-  static const LatLng _safeZoneCenter = LatLng(37.7749, -122.4194);
-  static const LatLng _patientLocation = LatLng(37.7763, -122.4177);
-  static const double _safeZoneRadiusMeters = 500;
-
   static const CameraPosition _initialCameraPosition = CameraPosition(
-    target: _safeZoneCenter,
+    target: LatLng(37.7749, -122.4194),
     zoom: 14.5,
   );
 
-  Set<Marker> _markers(bool isInside) => {
-        Marker(
-          markerId: const MarkerId('caregiver_location'),
-          position: _caregiverLocation,
-          infoWindow: const InfoWindow(title: 'Caregiver'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueViolet,
-          ),
-        ),
-        const Marker(
-          markerId: MarkerId('safe_zone_center'),
-          position: _safeZoneCenter,
-          infoWindow: InfoWindow(title: 'Safe Zone Center'),
-        ),
-        Marker(
-          markerId: const MarkerId('patient_location'),
-          position: _patientLocation,
-          infoWindow: const InfoWindow(title: 'John Doe'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            isInside
-                ? BitmapDescriptor.hueGreen
-                : BitmapDescriptor.hueRed,
-          ),
-        ),
-      };
+  Set<Marker> _buildMarkers(bool isInside, LatLng? patientPos, LatLng? szCenter) {
+    final markers = <Marker>{};
 
-  Set<Circle> get _circles => {
-        Circle(
-          circleId: const CircleId('safe_zone_radius'),
-          center: _safeZoneCenter,
-          radius: _safeZoneRadiusMeters,
-          strokeColor: AppColors.primaryColor,
-          strokeWidth: 2,
-          fillColor: AppColors.primaryColor.withAlpha(51),
-        ),
-      };
+    if (szCenter != null) {
+      markers.add(Marker(
+        markerId: const MarkerId('safe_zone_center'),
+        position: szCenter,
+        infoWindow: const InfoWindow(title: 'Safe Zone Center'),
+      ));
+    }
 
-  Future<void> _recenterMap() async {
+    if (patientPos != null) {
+      final patientName = ref.read(selectedPatientProvider)?.name ?? 'Patient';
+      markers.add(Marker(
+        markerId: const MarkerId('patient_location'),
+        position: patientPos,
+        infoWindow: InfoWindow(title: patientName),
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          isInside ? BitmapDescriptor.hueGreen : BitmapDescriptor.hueRed,
+        ),
+      ));
+    }
+
+    return markers;
+  }
+
+  Set<Circle> _buildCircles(LatLng? szCenter, double? radius) {
+    if (szCenter == null || radius == null) return {};
+    return {
+      Circle(
+        circleId: const CircleId('safe_zone_radius'),
+        center: szCenter,
+        radius: radius,
+        strokeColor: AppColors.primaryColor,
+        strokeWidth: 2,
+        fillColor: AppColors.primaryColor.withAlpha(51),
+      ),
+    };
+  }
+
+  Future<void> _recenterMap(LatLng? patientPos, LatLng? szCenter) async {
     final controller = _mapController;
     if (controller == null) return;
 
-    final bounds = boundsFromPoints([
-      _caregiverLocation,
-      _patientLocation,
-    ]);
-    await controller.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 80),
-    );
-  }
+    final points = <LatLng>[];
+    if (patientPos != null) points.add(patientPos);
+    if (szCenter != null) points.add(szCenter);
+    if (points.isEmpty) return;
 
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() {
-      ref.read(safeZoneIsInsideProvider.notifier).state = widget.isInside;
-    });
+    if (points.length == 1) {
+      await controller
+          .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
+    } else {
+      final bounds = boundsFromPoints(points);
+      await controller
+          .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    }
   }
 
   @override
@@ -97,7 +92,24 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isInside = ref.watch(safeZoneIsInsideProvider);
+    final patient = ref.watch(selectedPatientProvider);
+    final szStatus = ref.watch(safeZoneStatusProvider);
+    final isInside = szStatus == SafeZoneStatus.inside;
+    final patientName = patient?.name ?? 'Patient';
+
+    final liveLocation = ref.watch(liveLocationProvider);
+    final primaryZone = ref.watch(primarySafeZoneProvider);
+
+    final patientPos = liveLocation.whenOrNull(
+      data: (record) => record != null && record.latitude != null
+          ? LatLng(record.latitude!, record.longitude!)
+          : null,
+    );
+
+    final szCenter = primaryZone != null
+        ? LatLng(primaryZone.centerLat, primaryZone.centerLng)
+        : null;
+    final szRadius = primaryZone?.radiusMeters;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -127,8 +139,8 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
           GoogleMap(
             initialCameraPosition: _initialCameraPosition,
             onMapCreated: (controller) => _mapController = controller,
-            markers: _markers(isInside),
-            circles: _circles,
+            markers: _buildMarkers(isInside, patientPos, szCenter),
+            circles: _buildCircles(szCenter, szRadius),
             compassEnabled: true,
             zoomControlsEnabled: true,
             scrollGesturesEnabled: true,
@@ -171,8 +183,8 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
                     Expanded(
                       child: Text(
                         isInside
-                            ? 'John Doe is inside the safe zone'
-                            : 'John Doe is OUTSIDE the safe zone',
+                            ? '$patientName is inside the safe zone'
+                            : '$patientName is OUTSIDE the safe zone',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: isInside
@@ -205,37 +217,44 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Patient: John Doe',
-                      style: TextStyle(
+                    Text(
+                      'Patient: $patientName',
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primaryColor,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          size: 16,
-                          color: AppColors.primaryColor,
-                        ),
-                        const SizedBox(width: 4),
-                        const Text(
-                          '37.7749, -122.4194',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.black54,
+                    if (szCenter != null) ...[
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.location_on,
+                            size: 16,
+                            color: AppColors.primaryColor,
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Radius: 500 meters',
-                      style: TextStyle(fontSize: 14, color: Colors.black54),
-                    ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${szCenter.latitude.toStringAsFixed(4)}, ${szCenter.longitude.toStringAsFixed(4)}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Radius: ${szRadius?.round() ?? '--'} meters',
+                        style:
+                            const TextStyle(fontSize: 14, color: Colors.black54),
+                      ),
+                    ] else
+                      const Text(
+                        'No safe zone configured',
+                        style: TextStyle(fontSize: 14, color: Colors.black54),
+                      ),
                     const SizedBox(height: 4),
                     Row(
                       children: [
@@ -247,7 +266,8 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
                         const SizedBox(width: 4),
                         Text(
                           isInside ? 'Inside safe zone' : 'Outside safe zone',
-                          style: const TextStyle(fontSize: 14, color: Colors.black54),
+                          style: const TextStyle(
+                              fontSize: 14, color: Colors.black54),
                         ),
                       ],
                     ),
@@ -272,7 +292,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
             child: FloatingActionButton.small(
               heroTag: 'safe_zone_recenter_fab',
               backgroundColor: AppColors.surfaceColor,
-              onPressed: _recenterMap,
+              onPressed: () => _recenterMap(patientPos, szCenter),
               child: const Icon(
                 Icons.center_focus_strong,
                 color: AppColors.primaryColor,
