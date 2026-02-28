@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/memory_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/routes.dart';
+import 'package:relapse_flutter/screens/navigation/main_screen.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
@@ -499,11 +501,13 @@ class _QuickStatsRow extends ConsumerWidget {
       error: (_, __) => '--',
     );
 
+    final memoryCount = ref.watch(memoryReminderCountProvider).toString();
+
     return Row(
       children: [
         _StatCard(
           icon: Icons.photo_library_outlined,
-          count: '--',
+          count: memoryCount,
           label: 'Memories',
           color: AppColors.gradientStart,
           screenWidth: screenWidth,
@@ -587,13 +591,13 @@ class _StatCard extends StatelessWidget {
 }
 
 // ─── Feature Grid ─────────────────────────────────────────────────────
-class _FeatureGrid extends StatelessWidget {
+class _FeatureGrid extends ConsumerWidget {
   final double screenWidth;
 
   const _FeatureGrid({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final features = [
       _FeatureItem(
         icon: Icons.cloud_upload_outlined,
@@ -611,7 +615,9 @@ class _FeatureGrid extends StatelessWidget {
         icon: Icons.show_chart_outlined,
         title: 'Activity Monitoring',
         subtitle: 'Location History',
-        onTap: () {},
+        onTap: () {
+          ref.read(mainTabIndexProvider.notifier).state = 3;
+        },
       ),
     ];
 

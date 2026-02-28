@@ -10,6 +10,9 @@ import 'package:relapse_flutter/screens/activity/activity_screen.dart';
 import 'package:relapse_flutter/widgets/common/offline_banner.dart';
 import 'package:relapse_flutter/widgets/navigation/custom_bottom_navigation_bar.dart';
 
+/// Provider to allow child screens to switch the main tab index.
+final mainTabIndexProvider = StateProvider<int>((ref) => 0);
+
 /// Main shell screen with IndexedStack and bottom navigation.
 /// Also handles FCM token registration and notification tap navigation.
 class MainScreen extends ConsumerStatefulWidget {
@@ -20,8 +23,6 @@ class MainScreen extends ConsumerStatefulWidget {
 }
 
 class _MainScreenState extends ConsumerState<MainScreen> {
-  int _currentIndex = 0;
-
   @override
   void initState() {
     super.initState();
@@ -33,6 +34,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currentIndex = ref.watch(mainTabIndexProvider);
+
     // Listen for notification taps and navigate accordingly.
     ref.listen(notificationTapProvider, (_, next) {
       final payload = next.valueOrNull;
@@ -40,7 +43,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       switch (payload.screen) {
         case 'activity':
-          setState(() => _currentIndex = 3);
+          ref.read(mainTabIndexProvider.notifier).state = 3;
           break;
         case 'memory_details':
           if (payload.reminderId != null) {
@@ -50,7 +53,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               arguments: payload.reminderId,
             );
           } else {
-            setState(() => _currentIndex = 1);
+            ref.read(mainTabIndexProvider.notifier).state = 1;
           }
           break;
         default:
@@ -65,7 +68,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           const OfflineBanner(),
           Expanded(
             child: IndexedStack(
-              index: _currentIndex,
+              index: currentIndex,
               children: const [
                 HomeScreen(),
                 MemoryScreen(),
@@ -77,8 +80,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ],
       ),
       bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
+        currentIndex: currentIndex,
+        onTap: (index) => ref.read(mainTabIndexProvider.notifier).state = index,
       ),
     );
   }

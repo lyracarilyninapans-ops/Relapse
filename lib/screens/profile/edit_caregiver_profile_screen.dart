@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
@@ -20,6 +23,8 @@ class _EditCaregiverProfileScreenState
   late TextEditingController _phoneCtrl;
   late TextEditingController _bioCtrl;
   bool _isSaving = false;
+  File? _pickedPhoto;
+  String? _existingPhotoUrl;
 
   @override
   void initState() {
@@ -31,6 +36,15 @@ class _EditCaregiverProfileScreenState
     );
     _phoneCtrl = TextEditingController(text: profile?.phone ?? '');
     _bioCtrl = TextEditingController(text: profile?.bio ?? '');
+    _existingPhotoUrl = profile?.photoUrl;
+  }
+
+  Future<void> _pickProfilePhoto() async {
+    final uploadService = ref.read(mediaUploadServiceProvider);
+    final file = await uploadService.pickPhoto();
+    if (file != null && mounted) {
+      setState(() => _pickedPhoto = file);
+    }
   }
 
   @override
@@ -56,12 +70,22 @@ class _EditCaregiverProfileScreenState
     setState(() => _isSaving = true);
 
     try {
+      String? photoUrl = _existingPhotoUrl;
+      if (_pickedPhoto != null) {
+        photoUrl = await ref.read(mediaUploadServiceProvider).uploadProfilePhoto(
+          file: _pickedPhoto!,
+          uid: authUser.uid,
+          subPath: 'caregiver',
+        );
+      }
+
       await ref.read(userRemoteSourceProvider).updateProfile(authUser.uid, {
         'name': name,
         'phone': _phoneCtrl.text.trim().isEmpty
             ? null
             : _phoneCtrl.text.trim(),
         'bio': _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
+        if (photoUrl != null) 'photoUrl': photoUrl,
       });
 
       if (mounted) Navigator.pop(context);
@@ -96,7 +120,10 @@ class _EditCaregiverProfileScreenState
           children: [
             const SizedBox(height: 20),
 
-            const ProfilePictureCircle(),
+            ProfilePictureCircle(
+              imageUrl: _pickedPhoto != null ? null : _existingPhotoUrl,
+              onCameraTap: _pickProfilePhoto,
+            ),
             const SizedBox(height: 32),
 
             // Email (read-only)

@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/models/patient.dart';
 import 'package:relapse_flutter/routes.dart';
@@ -23,6 +26,7 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
   final _ageController = TextEditingController();
   final _notesController = TextEditingController();
   bool _isSaving = false;
+  File? _pickedPhoto;
 
   @override
   void dispose() {
@@ -48,6 +52,17 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
 
     try {
       final watchId = ModalRoute.of(context)?.settings.arguments as String?;
+
+      // Upload profile photo if picked
+      String? photoUrl;
+      if (_pickedPhoto != null) {
+        photoUrl = await ref.read(mediaUploadServiceProvider).uploadProfilePhoto(
+          file: _pickedPhoto!,
+          uid: authUser.uid,
+          subPath: 'patient_new',
+        );
+      }
+
       final patient = Patient(
         id: '',
         caregiverUid: authUser.uid,
@@ -56,6 +71,7 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
+        photoUrl: photoUrl,
         pairedWatchId: watchId,
         createdAt: DateTime.now(),
       );
@@ -140,7 +156,15 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
             const SizedBox(height: 32),
 
             // Profile picture
-            const ProfilePictureCircle(),
+            ProfilePictureCircle(
+              onCameraTap: () async {
+                final uploadService = ref.read(mediaUploadServiceProvider);
+                final file = await uploadService.pickPhoto();
+                if (file != null && mounted) {
+                  setState(() => _pickedPhoto = file);
+                }
+              },
+            ),
             const SizedBox(height: 32),
 
             // Name

@@ -48,7 +48,34 @@ class ActivityScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const GradientIcon(Icons.calendar_today_outlined, size: 22),
-            onPressed: () {},
+            onPressed: () async {
+              final now = DateTime.now();
+              final picked = await showDateRangePicker(
+                context: context,
+                firstDate: DateTime(now.year - 1),
+                lastDate: now,
+                initialDateRange: DateTimeRange(
+                  start: now.subtract(const Duration(days: 7)),
+                  end: now,
+                ),
+                builder: (context, child) {
+                  return Theme(
+                    data: Theme.of(context).copyWith(
+                      colorScheme: Theme.of(context).colorScheme.copyWith(
+                            primary: AppColors.primaryColor,
+                          ),
+                    ),
+                    child: child!,
+                  );
+                },
+              );
+              if (picked != null) {
+                // When a custom date range is picked, set to monthly view
+                // (closest encompassing filter) as a visual indicator
+                ref.read(selectedDateRangeFilterProvider.notifier).state =
+                    DateRangeFilter.thisMonth;
+              }
+            },
           ),
           const SizedBox(width: 4),
         ],

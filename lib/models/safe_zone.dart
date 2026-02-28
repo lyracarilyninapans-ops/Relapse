@@ -7,6 +7,7 @@ class SafeZone {
   final bool isActive;
   final bool alarmEnabled;
   final bool vibrationEnabled;
+  final bool alertOnExit;
   final String? contactOnExit;
 
   const SafeZone({
@@ -18,6 +19,7 @@ class SafeZone {
     this.isActive = true,
     this.alarmEnabled = true,
     this.vibrationEnabled = true,
+    this.alertOnExit = true,
     this.contactOnExit,
   });
 
@@ -31,6 +33,7 @@ class SafeZone {
       isActive: json['isActive'] as bool? ?? true,
       alarmEnabled: json['alarmEnabled'] as bool? ?? true,
       vibrationEnabled: json['vibrationEnabled'] as bool? ?? true,
+      alertOnExit: json['alertOnExit'] as bool? ?? true,
       contactOnExit: json['contactOnExit'] as String?,
     );
   }
@@ -45,6 +48,7 @@ class SafeZone {
       'isActive': isActive,
       'alarmEnabled': alarmEnabled,
       'vibrationEnabled': vibrationEnabled,
+      'alertOnExit': alertOnExit,
       'contactOnExit': contactOnExit,
     };
   }
@@ -58,6 +62,7 @@ class SafeZone {
     bool? isActive,
     bool? alarmEnabled,
     bool? vibrationEnabled,
+    bool? alertOnExit,
     String? contactOnExit,
   }) {
     return SafeZone(
@@ -69,6 +74,7 @@ class SafeZone {
       isActive: isActive ?? this.isActive,
       alarmEnabled: alarmEnabled ?? this.alarmEnabled,
       vibrationEnabled: vibrationEnabled ?? this.vibrationEnabled,
+      alertOnExit: alertOnExit ?? this.alertOnExit,
       contactOnExit: contactOnExit ?? this.contactOnExit,
     );
   }

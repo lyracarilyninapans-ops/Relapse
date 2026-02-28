@@ -50,6 +50,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         _safeZoneCenter = LatLng(zone.centerLat, zone.centerLng);
         _radius = zone.radiusMeters;
         _locationSelected = true;
+        _alertOnExit = zone.alertOnExit;
         _watchBehavior = zone.alarmEnabled && zone.vibrationEnabled
             ? 'both'
             : zone.alarmEnabled
@@ -138,6 +139,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         alarmEnabled: _watchBehavior == 'alarm' || _watchBehavior == 'both',
         vibrationEnabled:
             _watchBehavior == 'vibrate' || _watchBehavior == 'both',
+        alertOnExit: _alertOnExit,
       );
 
       if (existingZone != null) {

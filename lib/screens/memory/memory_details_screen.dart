@@ -1,19 +1,82 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:video_player/video_player.dart';
 import 'package:relapse_flutter/models/media_item.dart';
 import 'package:relapse_flutter/models/memory_reminder.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/memory_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Memory details screen showing photo, location, audio/video sections.
-class MemoryDetailsScreen extends ConsumerWidget {
+class MemoryDetailsScreen extends ConsumerStatefulWidget {
   const MemoryDetailsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MemoryDetailsScreen> createState() =>
+      _MemoryDetailsScreenState();
+}
+
+class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
+  AudioPlayer? _audioPlayer;
+  VideoPlayerController? _videoController;
+  bool _isAudioPlaying = false;
+  Duration _audioDuration = Duration.zero;
+  Duration _audioPosition = Duration.zero;
+  bool _videoInitialized = false;
+
+  @override
+  void dispose() {
+    _audioPlayer?.dispose();
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  void _initAudioPlayer(String url) {
+    if (_audioPlayer != null) return;
+    _audioPlayer = AudioPlayer();
+    _audioPlayer!.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _audioDuration = d);
+    });
+    _audioPlayer!.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _audioPosition = p);
+    });
+    _audioPlayer!.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _isAudioPlaying = false);
+    });
+    _audioPlayer!.setSourceUrl(url);
+  }
+
+  void _initVideoPlayer(String url) {
+    if (_videoController != null) return;
+    _videoController = VideoPlayerController.networkUrl(Uri.parse(url))
+      ..initialize().then((_) {
+        if (mounted) setState(() => _videoInitialized = true);
+      });
+  }
+
+  Future<void> _toggleAudio(String url) async {
+    _initAudioPlayer(url);
+    if (_isAudioPlaying) {
+      await _audioPlayer!.pause();
+      setState(() => _isAudioPlaying = false);
+    } else {
+      await _audioPlayer!.play(UrlSource(url));
+      setState(() => _isAudioPlaying = true);
+    }
+  }
+
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final reminderId = ModalRoute.of(context)?.settings.arguments as String?;
     final remindersAsync = ref.watch(memoryRemindersProvider);
 
@@ -134,27 +197,105 @@ class MemoryDetailsScreen extends ConsumerWidget {
                     ?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              Container(
-                height: 50,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryContainerColor,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.audiotrack, color: AppColors.primaryColor),
-                      SizedBox(width: 8),
-                      Text(
-                        'Audio playback',
+              Builder(builder: (context) {
+                final audioItem = reminder.mediaItems.firstWhere(
+                  (m) => m.type == MediaType.audio,
+                );
+                final audioUrl = audioItem.cloudUrl;
+                if (audioUrl == null || audioUrl.isEmpty) {
+                  return Container(
+                    height: 50,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryContainerColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Audio file not uploaded yet',
                         style: TextStyle(color: AppColors.primaryColor),
+                      ),
+                    ),
+                  );
+                }
+                _initAudioPlayer(audioUrl);
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryContainerColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              _isAudioPlaying
+                                  ? Icons.pause_circle_filled
+                                  : Icons.play_circle_filled,
+                              color: AppColors.primaryColor,
+                              size: 40,
+                            ),
+                            onPressed: () => _toggleAudio(audioUrl),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 4,
+                                    thumbShape: const RoundSliderThumbShape(
+                                        enabledThumbRadius: 6),
+                                  ),
+                                  child: Slider(
+                                    value: _audioPosition.inMilliseconds
+                                        .toDouble()
+                                        .clamp(
+                                            0,
+                                            _audioDuration.inMilliseconds
+                                                .toDouble()
+                                                .clamp(1, double.infinity)),
+                                    min: 0,
+                                    max: _audioDuration.inMilliseconds
+                                        .toDouble()
+                                        .clamp(1, double.infinity),
+                                    activeColor: AppColors.primaryColor,
+                                    onChanged: (val) {
+                                      _audioPlayer?.seek(
+                                          Duration(milliseconds: val.toInt()));
+                                    },
+                                  ),
+                                ),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      _formatDuration(_audioPosition),
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey[600]),
+                                    ),
+                                    Text(
+                                      _formatDuration(_audioDuration),
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey[600]),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ),
-              ),
+                );
+              }),
               const SizedBox(height: 16),
             ],
 
@@ -168,31 +309,86 @@ class MemoryDetailsScreen extends ConsumerWidget {
                     ?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              Container(
-                height: 200,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryContainerColor,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.videocam,
-                        size: 48,
-                        color: AppColors.primaryColor,
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Video playback',
+              Builder(builder: (context) {
+                final videoItem = reminder.mediaItems.firstWhere(
+                  (m) => m.type == MediaType.video,
+                );
+                final videoUrl = videoItem.cloudUrl;
+                if (videoUrl == null || videoUrl.isEmpty) {
+                  return Container(
+                    height: 200,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryContainerColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Video file not uploaded yet',
                         style: TextStyle(color: AppColors.primaryColor),
                       ),
-                    ],
-                  ),
-                ),
-              ),
+                    ),
+                  );
+                }
+                _initVideoPlayer(videoUrl);
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: _videoInitialized && _videoController != null
+                      ? AspectRatio(
+                          aspectRatio: _videoController!.value.aspectRatio,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              VideoPlayer(_videoController!),
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    if (_videoController!.value.isPlaying) {
+                                      _videoController!.pause();
+                                    } else {
+                                      _videoController!.play();
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  color: Colors.transparent,
+                                  child: AnimatedOpacity(
+                                    opacity:
+                                        _videoController!.value.isPlaying
+                                            ? 0.0
+                                            : 1.0,
+                                    duration:
+                                        const Duration(milliseconds: 200),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.black45,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      padding: const EdgeInsets.all(12),
+                                      child: const Icon(
+                                        Icons.play_arrow,
+                                        color: Colors.white,
+                                        size: 48,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Container(
+                          height: 200,
+                          width: double.infinity,
+                          color: AppColors.primaryContainerColor,
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              color: AppColors.primaryColor,
+                            ),
+                          ),
+                        ),
+                );
+              }),
               const SizedBox(height: 24),
             ],
 
@@ -204,7 +400,7 @@ class MemoryDetailsScreen extends ConsumerWidget {
                   onPressed: () {
                     Navigator.pushNamed(
                       context,
-                      '/create-memory',
+                      Routes.createMemory,
                       arguments: reminder.id,
                     );
                   },

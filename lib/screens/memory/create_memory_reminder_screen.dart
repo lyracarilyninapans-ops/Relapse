@@ -1,17 +1,21 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:relapse_flutter/models/media_item.dart';
 import 'package:relapse_flutter/models/memory_reminder.dart';
 import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/memory_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
-import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Create Memory Reminder screen with step indicator, map selection, radius,
@@ -47,6 +51,23 @@ class _CreateMemoryReminderScreenState
   bool _hasAudio = false;
   bool _hasVideo = false;
   bool _isSaving = false;
+
+  // Actual file references for upload
+  File? _photoFile;
+  File? _audioFile;
+  File? _videoFile;
+
+  // Edit mode
+  String? _editReminderId;
+  MemoryReminder? _existingReminder;
+  bool _editLoaded = false;
+
+  // Existing cloud URLs (for edit mode)
+  String? _existingPhotoUrl;
+  String? _existingAudioUrl;
+  String? _existingVideoUrl;
+
+  double _uploadProgress = 0;
 
   bool get _isTextInputFocused =>
       _nameFocusNode.hasFocus || _searchFocusNode.hasFocus;
@@ -108,6 +129,54 @@ class _CreateMemoryReminderScreenState
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_editLoaded) {
+      _editLoaded = true;
+      _editReminderId =
+          ModalRoute.of(context)?.settings.arguments as String?;
+      if (_editReminderId != null) {
+        _loadExistingReminder();
+      }
+    }
+  }
+
+  void _loadExistingReminder() {
+    final reminders =
+        ref.read(memoryRemindersProvider).valueOrNull ?? [];
+    final matches =
+        reminders.where((r) => r.id == _editReminderId).toList();
+    if (matches.isNotEmpty) {
+      final reminder = matches.first;
+      _existingReminder = reminder;
+      _nameController.text = reminder.title;
+      if (reminder.latitude != null && reminder.longitude != null) {
+        _selectedLocation =
+            LatLng(reminder.latitude!, reminder.longitude!);
+      }
+      _radius = reminder.radiusMeters;
+
+      for (final media in reminder.mediaItems) {
+        switch (media.type) {
+          case MediaType.photo:
+            _hasPhoto = true;
+            _existingPhotoUrl = media.cloudUrl;
+            break;
+          case MediaType.audio:
+            _hasAudio = true;
+            _existingAudioUrl = media.cloudUrl;
+            break;
+          case MediaType.video:
+            _hasVideo = true;
+            _existingVideoUrl = media.cloudUrl;
+            break;
+        }
+      }
+      setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
     _mapController?.dispose();
     _nameController.removeListener(_onNameChanged);
@@ -147,19 +216,109 @@ class _CreateMemoryReminderScreenState
   }
 
   void _toggleMedia(String type) {
-    setState(() {
-      switch (type) {
-        case 'photo':
-          _hasPhoto = !_hasPhoto;
-          break;
-        case 'audio':
-          _hasAudio = !_hasAudio;
-          break;
-        case 'video':
-          _hasVideo = !_hasVideo;
-          break;
-      }
-    });
+    switch (type) {
+      case 'photo':
+        if (_hasPhoto) {
+          setState(() {
+            _hasPhoto = false;
+            _photoFile = null;
+            _existingPhotoUrl = null;
+          });
+        } else {
+          _pickPhoto();
+        }
+        break;
+      case 'audio':
+        if (_hasAudio) {
+          setState(() {
+            _hasAudio = false;
+            _audioFile = null;
+            _existingAudioUrl = null;
+          });
+        } else {
+          _pickAudio();
+        }
+        break;
+      case 'video':
+        if (_hasVideo) {
+          setState(() {
+            _hasVideo = false;
+            _videoFile = null;
+            _existingVideoUrl = null;
+          });
+        } else {
+          _pickVideo();
+        }
+        break;
+    }
+  }
+
+  Future<void> _pickPhoto() async {
+    final source = await _showMediaSourceDialog('Photo');
+    if (source == null) return;
+
+    final uploadService = ref.read(mediaUploadServiceProvider);
+    final file = await uploadService.pickPhoto(source: source);
+    if (file != null && mounted) {
+      setState(() {
+        _photoFile = file;
+        _hasPhoto = true;
+        _existingPhotoUrl = null;
+      });
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    final source = await _showMediaSourceDialog('Video');
+    if (source == null) return;
+
+    final uploadService = ref.read(mediaUploadServiceProvider);
+    final file = await uploadService.pickVideo(source: source);
+    if (file != null && mounted) {
+      setState(() {
+        _videoFile = file;
+        _hasVideo = true;
+        _existingVideoUrl = null;
+      });
+    }
+  }
+
+  Future<void> _pickAudio() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: false,
+    );
+    if (result != null && result.files.single.path != null && mounted) {
+      setState(() {
+        _audioFile = File(result.files.single.path!);
+        _hasAudio = true;
+        _existingAudioUrl = null;
+      });
+    }
+  }
+
+  Future<ImageSource?> _showMediaSourceDialog(String mediaType) async {
+    return showDialog<ImageSource>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Select $mediaType Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _saveMemory() async {
@@ -169,42 +328,121 @@ class _CreateMemoryReminderScreenState
     final patientId = ref.read(selectedPatientIdProvider);
     if (authUser == null || patientId == null) return;
 
-    setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _uploadProgress = 0;
+    });
 
     try {
-      // Build media items list based on toggled media types
+      final uploadService = ref.read(mediaUploadServiceProvider);
+      final reminderId = _editReminderId ?? '';
+      final tempId = reminderId.isEmpty
+          ? 'temp_${DateTime.now().millisecondsSinceEpoch}'
+          : reminderId;
+
+      // Upload media files to Firebase Storage
       final mediaItems = <MediaItem>[];
+      int totalUploads = 0;
+      int completedUploads = 0;
+
+      if (_photoFile != null) totalUploads++;
+      if (_audioFile != null) totalUploads++;
+      if (_videoFile != null) totalUploads++;
+
+      // Photo
       if (_hasPhoto) {
+        String? photoUrl = _existingPhotoUrl;
+        if (_photoFile != null) {
+          photoUrl = await uploadService.uploadMemoryMedia(
+            file: _photoFile!,
+            uid: authUser.uid,
+            patientId: patientId,
+            reminderId: tempId,
+            mediaType: 'photo',
+            onProgress: (p) {
+              if (mounted) {
+                setState(() => _uploadProgress =
+                    (completedUploads + p) / totalUploads.clamp(1, 100));
+              }
+            },
+          );
+          completedUploads++;
+        }
         mediaItems.add(MediaItem(
           id: 'photo_${DateTime.now().millisecondsSinceEpoch}',
-          reminderId: '',
+          reminderId: tempId,
           type: MediaType.photo,
+          localPath: _photoFile?.path,
+          cloudUrl: photoUrl,
         ));
       }
+
+      // Audio
       if (_hasAudio) {
+        String? audioUrl = _existingAudioUrl;
+        if (_audioFile != null) {
+          audioUrl = await uploadService.uploadMemoryMedia(
+            file: _audioFile!,
+            uid: authUser.uid,
+            patientId: patientId,
+            reminderId: tempId,
+            mediaType: 'audio',
+            onProgress: (p) {
+              if (mounted) {
+                setState(() => _uploadProgress =
+                    (completedUploads + p) / totalUploads.clamp(1, 100));
+              }
+            },
+          );
+          completedUploads++;
+        }
         mediaItems.add(MediaItem(
           id: 'audio_${DateTime.now().millisecondsSinceEpoch}',
-          reminderId: '',
+          reminderId: tempId,
           type: MediaType.audio,
+          localPath: _audioFile?.path,
+          cloudUrl: audioUrl,
         ));
       }
+
+      // Video
       if (_hasVideo) {
+        String? videoUrl = _existingVideoUrl;
+        if (_videoFile != null) {
+          videoUrl = await uploadService.uploadMemoryMedia(
+            file: _videoFile!,
+            uid: authUser.uid,
+            patientId: patientId,
+            reminderId: tempId,
+            mediaType: 'video',
+            onProgress: (p) {
+              if (mounted) {
+                setState(() => _uploadProgress =
+                    (completedUploads + p) / totalUploads.clamp(1, 100));
+              }
+            },
+          );
+          completedUploads++;
+        }
         mediaItems.add(MediaItem(
           id: 'video_${DateTime.now().millisecondsSinceEpoch}',
-          reminderId: '',
+          reminderId: tempId,
           type: MediaType.video,
+          localPath: _videoFile?.path,
+          cloudUrl: videoUrl,
         ));
       }
 
       final reminder = MemoryReminder(
-        id: '',
+        id: _editReminderId ?? '',
         patientId: patientId,
         title: _nameController.text.trim(),
+        description: _existingReminder?.description,
         latitude: _selectedLocation!.latitude,
         longitude: _selectedLocation!.longitude,
         radiusMeters: _radius,
         mediaItems: mediaItems,
-        createdAt: DateTime.now(),
+        createdAt: _existingReminder?.createdAt ?? DateTime.now(),
         isActive: true,
       );
 
@@ -245,9 +483,9 @@ class _CreateMemoryReminderScreenState
       appBar: AppBar(
         backgroundColor: AppColors.backgroundColor,
         elevation: 0,
-        title: const GradientText(
-          'Create Memory Reminder',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        title: GradientText(
+          _editReminderId != null ? 'Edit Memory Reminder' : 'Create Memory Reminder',
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
         iconTheme: const IconThemeData(color: AppColors.gradientStart),
       ),
@@ -306,15 +544,27 @@ class _CreateMemoryReminderScreenState
                       color: AppColors.surfaceColor,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Column(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(
+                        const CircularProgressIndicator(
                             color: AppColors.primaryColor),
-                        SizedBox(height: 16),
+                        const SizedBox(height: 16),
+                        if (_uploadProgress > 0 && _uploadProgress < 1)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: LinearProgressIndicator(
+                              value: _uploadProgress,
+                              color: AppColors.primaryColor,
+                              backgroundColor:
+                                  AppColors.primaryColor.withAlpha(51),
+                            ),
+                          ),
                         Text(
-                          'Saving memory...',
-                          style: TextStyle(
+                          _uploadProgress > 0 && _uploadProgress < 1
+                              ? 'Uploading ${(_uploadProgress * 100).toInt()}%...'
+                              : 'Saving...',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: AppColors.onSurfaceColor,
@@ -810,11 +1060,35 @@ class _CreateMemoryReminderScreenState
           ),
           const SizedBox(height: 12),
           if (_hasPhoto)
-            _mediaPreviewItem(Icons.photo_camera, 'Photo', 'Selected'),
+            _mediaPreviewItem(
+              Icons.photo_camera,
+              'Photo',
+              _photoFile != null
+                  ? _photoFile!.path.split('/').last
+                  : _existingPhotoUrl != null
+                      ? 'Existing photo'
+                      : 'Selected',
+            ),
           if (_hasAudio)
-            _mediaPreviewItem(Icons.audiotrack, 'Audio', 'Selected'),
+            _mediaPreviewItem(
+              Icons.audiotrack,
+              'Audio',
+              _audioFile != null
+                  ? _audioFile!.path.split('/').last
+                  : _existingAudioUrl != null
+                      ? 'Existing audio'
+                      : 'Selected',
+            ),
           if (_hasVideo)
-            _mediaPreviewItem(Icons.videocam, 'Video', 'Selected'),
+            _mediaPreviewItem(
+              Icons.videocam,
+              'Video',
+              _videoFile != null
+                  ? _videoFile!.path.split('/').last
+                  : _existingVideoUrl != null
+                      ? 'Existing video'
+                      : 'Selected',
+            ),
         ],
       ),
     );

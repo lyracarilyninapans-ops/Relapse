@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
@@ -20,6 +23,8 @@ class _EditPatientProfileScreenState
   late TextEditingController _ageCtrl;
   late TextEditingController _notesCtrl;
   bool _isSaving = false;
+  File? _pickedPhoto;
+  String? _existingPhotoUrl;
 
   @override
   void initState() {
@@ -28,6 +33,15 @@ class _EditPatientProfileScreenState
     _nameCtrl = TextEditingController(text: patient?.name ?? '');
     _ageCtrl = TextEditingController(text: patient?.age?.toString() ?? '');
     _notesCtrl = TextEditingController(text: patient?.notes ?? '');
+    _existingPhotoUrl = patient?.photoUrl;
+  }
+
+  Future<void> _pickProfilePhoto() async {
+    final uploadService = ref.read(mediaUploadServiceProvider);
+    final file = await uploadService.pickPhoto();
+    if (file != null && mounted) {
+      setState(() => _pickedPhoto = file);
+    }
   }
 
   @override
@@ -54,11 +68,24 @@ class _EditPatientProfileScreenState
     setState(() => _isSaving = true);
 
     try {
+      String? photoUrl = _existingPhotoUrl;
+      if (_pickedPhoto != null) {
+        final authUser = ref.read(authStateProvider).valueOrNull;
+        if (authUser != null) {
+          photoUrl = await ref.read(mediaUploadServiceProvider).uploadProfilePhoto(
+            file: _pickedPhoto!,
+            uid: authUser.uid,
+            subPath: 'patient_${patient.id}',
+          );
+        }
+      }
+
       final ageText = _ageCtrl.text.trim();
       final updated = patient.copyWith(
         name: name,
         age: ageText.isNotEmpty ? int.tryParse(ageText) : null,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        photoUrl: photoUrl,
       );
 
       await ref
@@ -95,7 +122,10 @@ class _EditPatientProfileScreenState
           children: [
             const SizedBox(height: 20),
 
-            const ProfilePictureCircle(),
+            ProfilePictureCircle(
+              imageUrl: _pickedPhoto != null ? null : _existingPhotoUrl,
+              onCameraTap: _pickProfilePhoto,
+            ),
             const SizedBox(height: 32),
 
             // Name
