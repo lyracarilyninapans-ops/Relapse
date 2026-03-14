@@ -30,13 +30,16 @@ class NotificationPayload {
   }
 
   Map<String, String> toMap() {
-    return {
+    final map = <String, String>{
       'type': type,
-      if (patientId != null) 'patientId': patientId!,
-      if (eventId != null) 'eventId': eventId!,
-      if (reminderId != null) 'reminderId': reminderId!,
-      if (screen != null) 'screen': screen!,
       ...extra,
     };
+
+    if (patientId != null) map['patientId'] = patientId!;
+    if (eventId != null) map['eventId'] = eventId!;
+    if (reminderId != null) map['reminderId'] = reminderId!;
+    if (screen != null) map['screen'] = screen!;
+
+    return map;
   }
 }

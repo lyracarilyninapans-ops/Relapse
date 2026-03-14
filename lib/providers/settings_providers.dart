@@ -1,37 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/services/settings_service.dart';
 
-/// SharedPreferences instance — must be initialized before use.
-final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
-  throw UnimplementedError(
-    'sharedPreferencesProvider must be overridden with a valid instance',
+/// Cloud-first SettingsService (Firestore-backed).
+final settingsServiceProvider = Provider<SettingsService>((ref) {
+  return SettingsService();
+});
+
+/// Real-time stream of all settings from Firestore.
+/// This is the primary settings source — cloud is the source of truth.
+final appSettingsProvider = StreamProvider<AppSettings>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
+  if (authUser == null) return Stream.value(AppSettings.defaults());
+  return ref.watch(settingsServiceProvider).watchSettings(authUser.uid);
+});
+
+/// Reminder cooldown in minutes (derived from cloud settings stream).
+final reminderCooldownProvider = Provider<int>((ref) {
+  return ref.watch(appSettingsProvider).valueOrNull?.reminderCooldownMinutes ?? 30;
+});
+
+/// Whether notification sounds are enabled (derived from cloud settings stream).
+final notificationSoundProvider = Provider<bool>((ref) {
+  return ref.watch(appSettingsProvider).valueOrNull?.notificationSoundEnabled ?? true;
+});
+
+/// Daily report time as TimeOfDay (derived from cloud settings stream).
+final dailyReportTimeProvider = Provider<TimeOfDay>((ref) {
+  final settings = ref.watch(appSettingsProvider).valueOrNull;
+  return TimeOfDay(
+    hour: settings?.dailyReportHour ?? 20,
+    minute: settings?.dailyReportMinute ?? 0,
   );
 });
 
-/// SettingsService backed by SharedPreferences.
-final settingsServiceProvider = Provider<SettingsService>((ref) {
-  return SettingsService(ref.watch(sharedPreferencesProvider));
-});
-
-/// Reminder cooldown in minutes.
-final reminderCooldownProvider = StateProvider<int>((ref) {
-  return ref.watch(settingsServiceProvider).reminderCooldownMinutes;
-});
-
-/// Whether notification sounds are enabled.
-final notificationSoundProvider = StateProvider<bool>((ref) {
-  return ref.watch(settingsServiceProvider).notificationSoundEnabled;
-});
-
-/// Daily report time as TimeOfDay.
-final dailyReportTimeProvider = StateProvider<TimeOfDay>((ref) {
-  final service = ref.watch(settingsServiceProvider);
-  return TimeOfDay(hour: service.dailyReportHour, minute: service.dailyReportMinute);
-});
-
-/// Theme mode preference (system, light, dark).
-final themeModeProvider = StateProvider<String>((ref) {
-  return ref.watch(settingsServiceProvider).themeMode;
+/// Theme mode preference (derived from cloud settings stream).
+final themeModeProvider = Provider<String>((ref) {
+  return ref.watch(appSettingsProvider).valueOrNull?.themeMode ?? 'system';
 });

@@ -26,10 +26,15 @@ class MediaUploadService {
         imageQuality: 85,
       );
       if (picked == null) return null;
-      return File(picked.path);
+      
+      final file = File(picked.path);
+      if (file.lengthSync() > 20 * 1024 * 1024) {
+        throw Exception('Photo exceeds the 20MB size limit.');
+      }
+      return file;
     } catch (e) {
       debugPrint('Error picking photo: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -37,13 +42,18 @@ class MediaUploadService {
     try {
       final picked = await _imagePicker.pickVideo(
         source: source,
-        maxDuration: const Duration(minutes: 5),
+        maxDuration: const Duration(minutes: 2),
       );
       if (picked == null) return null;
-      return File(picked.path);
+      
+      final file = File(picked.path);
+      if (file.lengthSync() > 20 * 1024 * 1024) {
+        throw Exception('Video exceeds the 20MB size limit.');
+      }
+      return file;
     } catch (e) {
       debugPrint('Error picking video: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -55,8 +65,18 @@ class MediaUploadService {
     required String storagePath,
     void Function(double progress)? onProgress,
   }) async {
+    if (!file.existsSync()) {
+      throw Exception('File does not exist: ${file.path}');
+    }
+
     final ref = _storage.ref().child(storagePath);
-    final uploadTask = ref.putFile(file);
+
+    // Detect MIME type so Firebase Storage stores it with the correct
+    // content-type header; this prevents getDownloadURL() failures.
+    final mimeType = _mimeTypeFromPath(file.path);
+    final metadata = SettableMetadata(contentType: mimeType);
+
+    final uploadTask = ref.putFile(file, metadata);
 
     if (onProgress != null) {
       uploadTask.snapshotEvents.listen((snapshot) {
@@ -66,8 +86,8 @@ class MediaUploadService {
       });
     }
 
-    final snapshot = await uploadTask;
-    return snapshot.ref.getDownloadURL();
+    await uploadTask;
+    return ref.getDownloadURL();
   }
 
   /// Uploads a memory media file (photo/audio/video) and returns the download URL.
@@ -95,7 +115,7 @@ class MediaUploadService {
   }) async {
     final ext = file.path.split('.').last;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final path = 'users/$uid/profile/$subPath\_$timestamp.$ext';
+    final path = 'users/$uid/profile/${subPath}_$timestamp.$ext';
     return uploadFile(file: file, storagePath: path, onProgress: onProgress);
   }
 
@@ -106,6 +126,37 @@ class MediaUploadService {
       await ref.delete();
     } catch (e) {
       debugPrint('Error deleting file: $e');
+    }
+  }
+
+  /// Resolve MIME type from a file path extension.
+  static String _mimeTypeFromPath(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+      case 'heif':
+        return 'image/heic';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'aac':
+        return 'audio/aac';
+      case 'm4a':
+        return 'audio/mp4';
+      default:
+        return 'application/octet-stream';
     }
   }
 }

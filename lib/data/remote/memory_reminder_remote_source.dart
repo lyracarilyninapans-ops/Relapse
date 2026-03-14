@@ -41,15 +41,22 @@ class MemoryReminderRemoteSource {
   /// If [reminder.id] is empty, Firestore auto-generates an ID.
   Future<String> saveReminder(
       String uid, String patientId, MemoryReminder reminder) async {
-    if (reminder.id.isEmpty) {
-      final docRef =
-          await _collection(uid, patientId).add(reminder.toJson()..remove('id'));
-      return docRef.id;
-    } else {
-      await _collection(uid, patientId)
-          .doc(reminder.id)
-          .set(reminder.toJson(), SetOptions(merge: true));
-      return reminder.id;
+    try {
+      late final String savedId;
+      if (reminder.id.isEmpty) {
+        final docRef =
+            await _collection(uid, patientId).add(reminder.toJson()..remove('id'));
+        savedId = docRef.id;
+      } else {
+        await _collection(uid, patientId)
+            .doc(reminder.id)
+            .set(reminder.toJson(), SetOptions(merge: true));
+        savedId = reminder.id;
+      }
+
+      return savedId;
+    } catch (_) {
+      rethrow;
     }
   }
 

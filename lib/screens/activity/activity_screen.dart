@@ -1,5 +1,10 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:relapse_flutter/models/activity_record.dart';
 import 'package:relapse_flutter/providers/activity_providers.dart';
@@ -7,6 +12,8 @@ import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
+import 'package:relapse_flutter/utils/date_range.dart';
+import 'package:relapse_flutter/utils/geocoding_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Activity monitoring screen with location overview, daily summary,
@@ -70,10 +77,10 @@ class ActivityScreen extends ConsumerWidget {
                 },
               );
               if (picked != null) {
-                // When a custom date range is picked, set to monthly view
-                // (closest encompassing filter) as a visual indicator
+                ref.read(customDateRangeProvider.notifier).state = 
+                    DateRange.custom(picked.start, picked.end);
                 ref.read(selectedDateRangeFilterProvider.notifier).state =
-                    DateRangeFilter.thisMonth;
+                    DateRangeFilter.custom;
               }
             },
           ),
@@ -152,7 +159,7 @@ class _DateFilterRow extends StatelessWidget {
 
   const _DateFilterRow({required this.selectedIndex, required this.onSelected});
 
-  static const _labels = ['Today', 'This Week', 'This Month'];
+  static const _labels = ['Today', 'This Week', 'This Month', 'Custom'];
 
   @override
   Widget build(BuildContext context) {
@@ -212,22 +219,176 @@ class _DateFilterRow extends StatelessWidget {
 }
 
 // ─── Current Location Card ────────────────────────────────────────────
-class _CurrentLocationCard extends ConsumerWidget {
+class _CurrentLocationCard extends ConsumerStatefulWidget {
   final double screenWidth;
   const _CurrentLocationCard({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CurrentLocationCard> createState() =>
+      _CurrentLocationCardState();
+}
+
+class _CurrentLocationCardState extends ConsumerState<_CurrentLocationCard> {
+  GoogleMapController? _mapController;
+  LatLng? _lastCameraTarget;
+  bool _autoFollow = true;
+  bool _isAnimatingCamera = false;
+
+  @override
+  void dispose() {
+    _mapController?.dispose();
+    super.dispose();
+  }
+
+  void _maybeAnimateCamera(LatLng target) {
+    if (!_autoFollow) return;
+
+    final controller = _mapController;
+    if (controller == null) return;
+
+    final last = _lastCameraTarget;
+    if (last != null) {
+      final movedMeters = _haversineDistance(
+        last.latitude,
+        last.longitude,
+        target.latitude,
+        target.longitude,
+      );
+      if (movedMeters < 15) return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _mapController == null) return;
+      _isAnimatingCamera = true;
+      _mapController!.animateCamera(CameraUpdate.newLatLng(target));
+      _lastCameraTarget = target;
+    });
+  }
+
+  void _resumeAutoFollow(LatLng target) {
+    setState(() {
+      _autoFollow = true;
+    });
+    _isAnimatingCamera = true;
+    _mapController?.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: target, zoom: 16),
+      ),
+    );
+    _lastCameraTarget = target;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final liveLocation = ref.watch(liveLocationProvider);
     final szStatus = ref.watch(safeZoneStatusProvider);
+    final safeZones = ref.watch(safeZoneConfigProvider).valueOrNull ?? const [];
 
-    final locationText = liveLocation.when(
+    final currentRecord = liveLocation.valueOrNull;
+    final hasLiveCoords =
+        currentRecord?.latitude != null && currentRecord?.longitude != null;
+    final currentLatLng = hasLiveCoords
+        ? LatLng(currentRecord!.latitude!, currentRecord.longitude!)
+        : null;
+
+    if (currentLatLng != null) {
+      _maybeAnimateCamera(currentLatLng);
+    }
+
+    final mapMarkers = <Marker>{
+      if (currentLatLng != null)
+        Marker(
+          markerId: const MarkerId('current_location'),
+          position: currentLatLng,
+        ),
+    };
+
+    final historyAsync = ref.watch(locationHistoryProvider);
+    final historicalPoints = historyAsync.maybeWhen(
+      data: (records) => records
+          .where((r) => r.latitude != null && r.longitude != null)
+          .map((r) => LatLng(r.latitude!, r.longitude!))
+          .toList(),
+      orElse: () => <LatLng>[],
+    );
+
+    final mapPolylines = <Polyline>{
+      if (historicalPoints.length > 1)
+        Polyline(
+          polylineId: const PolylineId('history_path'),
+          points: historicalPoints.reversed.toList(), // oldest to newest
+          color: AppColors.gradientStart,
+          width: 4,
+          jointType: JointType.round,
+        ),
+    };
+
+    final safeZoneCircles = <Circle>{
+      for (final zone in safeZones)
+        Circle(
+          circleId: CircleId('safe_zone_${zone.id}'),
+          center: LatLng(zone.centerLat, zone.centerLng),
+          radius: zone.radiusMeters,
+          strokeWidth: 2,
+          strokeColor: AppColors.safeZoneInsideStart.withAlpha(180),
+          fillColor: AppColors.safeZoneInsideStart.withAlpha(40),
+        ),
+    };
+
+    final locationContent = liveLocation.when(
       data: (record) {
-        if (record == null) return 'Waiting for location...';
-        return '${record.latitude?.toStringAsFixed(5)}, ${record.longitude?.toStringAsFixed(5)}';
+        if (record == null) {
+          return Text(
+            'Waiting for location...',
+            style: TextStyle(
+              fontSize: scaledFontSize(15, widget.screenWidth),
+              fontWeight: FontWeight.w600,
+              color: AppColors.primaryColor,
+            ),
+          );
+        }
+
+        final lat = record.latitude;
+        final lng = record.longitude;
+        if (lat == null || lng == null) {
+          return Text(
+            'Location unavailable',
+            style: TextStyle(
+              fontSize: scaledFontSize(15, widget.screenWidth),
+              fontWeight: FontWeight.w600,
+              color: AppColors.primaryColor,
+            ),
+          );
+        }
+
+        return _ResolvedLocationText(
+          latitude: lat,
+          longitude: lng,
+          fallback: '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}',
+          resolvingText: 'Resolving location...',
+          style: TextStyle(
+            fontSize: scaledFontSize(15, widget.screenWidth),
+            fontWeight: FontWeight.w600,
+            color: AppColors.primaryColor,
+          ),
+        );
       },
-      loading: () => 'Loading location...',
-      error: (_, __) => 'Location unavailable',
+      loading: () => Text(
+        'Loading location...',
+        style: TextStyle(
+          fontSize: scaledFontSize(15, widget.screenWidth),
+          fontWeight: FontWeight.w600,
+          color: AppColors.primaryColor,
+        ),
+      ),
+      error: (error, stackTrace) => Text(
+        'Location unavailable',
+        style: TextStyle(
+          fontSize: scaledFontSize(15, widget.screenWidth),
+          fontWeight: FontWeight.w600,
+          color: AppColors.primaryColor,
+        ),
+      ),
     );
 
     final updatedText = liveLocation.when(
@@ -239,7 +400,7 @@ class _CurrentLocationCard extends ConsumerWidget {
         return 'Updated ${diff.inHours}h ago';
       },
       loading: () => '',
-      error: (_, __) => '',
+      error: (error, stackTrace) => '',
     );
 
     final isInside = szStatus == SafeZoneStatus.inside;
@@ -263,7 +424,7 @@ class _CurrentLocationCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Map placeholder
+            // Live map (fallback placeholder when no coordinates yet)
             Container(
               height: 160,
               width: double.infinity,
@@ -271,91 +432,223 @@ class _CurrentLocationCard extends ConsumerWidget {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(13.5),
                 ),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    AppColors.gradientStart.withAlpha(40),
-                    AppColors.gradientMiddle.withAlpha(40),
-                    AppColors.gradientEnd.withAlpha(40),
-                  ],
-                ),
               ),
-              child: Stack(
-                children: [
-                  ..._buildGridLines(),
-                  Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            gradient: AppGradients.button,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.gradientStart.withAlpha(100),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4),
-                              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(13.5),
+                ),
+                child: Stack(
+                  children: [
+                    if (currentLatLng != null)
+                      GoogleMap(
+                        initialCameraPosition: CameraPosition(
+                          target: currentLatLng,
+                          zoom: 16,
+                        ),
+                        onMapCreated: (controller) {
+                          _mapController = controller;
+                          _lastCameraTarget = currentLatLng;
+                        },
+                        onCameraMoveStarted: () {
+                          if (_isAnimatingCamera) return;
+                          if (_autoFollow && mounted) {
+                            setState(() {
+                              _autoFollow = false;
+                            });
+                          }
+                        },
+                        onCameraIdle: () {
+                          _isAnimatingCamera = false;
+                        },
+                        markers: mapMarkers,
+                        circles: safeZoneCircles,
+                        polylines: mapPolylines,
+                        mapToolbarEnabled: false,
+                        myLocationButtonEnabled: false,
+                        zoomControlsEnabled: false,
+                        compassEnabled: false,
+                        gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                          Factory<OneSequenceGestureRecognizer>(
+                            () => EagerGestureRecognizer(),
+                          ),
+                        },
+                      )
+                    else
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              AppColors.gradientStart.withAlpha(40),
+                              AppColors.gradientMiddle.withAlpha(40),
+                              AppColors.gradientEnd.withAlpha(40),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.person_pin_circle,
-                            color: Colors.white,
-                            size: 28,
-                          ),
                         ),
-                        const SizedBox(height: 4),
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: AppColors.gradientMiddle.withAlpha(80),
-                            shape: BoxShape.circle,
-                          ),
+                        child: Stack(
+                          children: [
+                            ..._buildGridLines(),
+                            Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      gradient: AppGradients.button,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: AppColors.gradientStart
+                                              .withAlpha(100),
+                                          blurRadius: 16,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Icon(
+                                      Icons.person_pin_circle,
+                                      color: Colors.white,
+                                      size: 28,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.gradientMiddle
+                                          .withAlpha(80),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                  // "Live" badge
-                  Positioned(
-                    top: 12,
-                    left: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.safeZoneInsideStart,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                AppColors.safeZoneInsideStart.withAlpha(100),
-                            blurRadius: 8,
-                          ),
-                        ],
                       ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.circle, size: 6, color: Colors.white),
-                          SizedBox(width: 6),
-                          Text(
-                            'LIVE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1,
+                    // "Live" badge
+                    Positioned(
+                      top: 12,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.safeZoneInsideStart,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.safeZoneInsideStart
+                                  .withAlpha(100),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.circle, size: 6, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text(
+                              'LIVE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (currentLatLng != null && !_autoFollow)
+                      Positioned(
+                        top: 12,
+                        right: 12,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(18),
+                            onTap: () => _resumeAutoFollow(currentLatLng),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceColor.withAlpha(230),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: AppColors.gradientStart.withAlpha(120),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.my_location,
+                                    size: 14,
+                                    color: AppColors.gradientStart,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Recenter',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.gradientStart,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                ],
+                    // Fullscreen button
+                    if (currentLatLng != null)
+                      Positioned(
+                        bottom: 10,
+                        right: 10,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => _FullScreenMapPage(
+                                    initialTarget: currentLatLng,
+                                    markers: mapMarkers,
+                                    polylines: mapPolylines,
+                                    circles: safeZoneCircles,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceColor.withAlpha(230),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.grey.shade300,
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.fullscreen,
+                                size: 20,
+                                color: AppColors.primaryColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
             // Location info
@@ -381,14 +674,7 @@ class _CurrentLocationCard extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          locationText,
-                          style: TextStyle(
-                            fontSize: scaledFontSize(15, screenWidth),
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primaryColor,
-                          ),
-                        ),
+                        locationContent,
                         const SizedBox(height: 4),
                         Row(
                           children: [
@@ -398,7 +684,8 @@ class _CurrentLocationCard extends ConsumerWidget {
                             Text(
                               updatedText,
                               style: TextStyle(
-                                fontSize: scaledFontSize(12, screenWidth),
+                                fontSize: scaledFontSize(
+                                    12, widget.screenWidth),
                                 color: Colors.grey[500],
                               ),
                             ),
@@ -458,6 +745,22 @@ class _CurrentLocationCard extends ConsumerWidget {
         ),
     ];
   }
+
+  static double _haversineDistance(
+      double lat1, double lng1, double lat2, double lng2) {
+    const earthRadius = 6371000.0;
+    final dLat = _toRadians(lat2 - lat1);
+    final dLng = _toRadians(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  static double _toRadians(double degrees) => degrees * math.pi / 180;
 }
 
 // ─── Daily Summary Row ────────────────────────────────────────────────
@@ -468,17 +771,31 @@ class _DailySummaryRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final summary = ref.watch(dailySummaryProvider);
+    final todayFeed = ref.watch(todayActivityFeedProvider);
+
+    final fallbackDistanceMeters = todayFeed.when(
+      data: _calculateFallbackDistanceMeters,
+      loading: () => 0.0,
+      error: (error, stackTrace) => 0.0,
+    );
+
+    final fallbackPlacesVisited = todayFeed.when(
+      data: _calculateFallbackPlacesVisited,
+      loading: () => 0,
+      error: (error, stackTrace) => 0,
+    );
 
     final distance = summary.when(
       data: (s) {
-        if (s == null) return '--';
-        if (s.distanceMeters >= 1000) {
-          return '${(s.distanceMeters / 1000).toStringAsFixed(1)} km';
+        final meters = s?.distanceMeters ?? fallbackDistanceMeters;
+        if (meters <= 0) return '--';
+        if (meters >= 1000) {
+          return '${(meters / 1000).toStringAsFixed(1)} km';
         }
-        return '${s.distanceMeters.toInt()} m';
+        return '${meters.toInt()} m';
       },
       loading: () => '...',
-      error: (_, __) => '--',
+      error: (error, stackTrace) => '--',
     );
 
     final timeOutside = summary.when(
@@ -490,13 +807,16 @@ class _DailySummaryRow extends ConsumerWidget {
         return '${mins}m';
       },
       loading: () => '...',
-      error: (_, __) => '--',
+      error: (error, stackTrace) => '--',
     );
 
     final places = summary.when(
-      data: (s) => s?.placesVisited.toString() ?? '--',
+      data: (s) {
+        final places = s?.placesVisited ?? fallbackPlacesVisited;
+        return places > 0 ? places.toString() : '--';
+      },
       loading: () => '...',
-      error: (_, __) => '--',
+      error: (error, stackTrace) => '--',
     );
 
     return Row(
@@ -527,6 +847,60 @@ class _DailySummaryRow extends ConsumerWidget {
       ],
     );
   }
+
+  static double _calculateFallbackDistanceMeters(List<ActivityRecord> records) {
+    final points = records
+        .where((r) =>
+            r.eventType == ActivityEventType.locationUpdate &&
+            r.latitude != null &&
+            r.longitude != null)
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    if (points.length < 2) return 0.0;
+
+    double total = 0.0;
+    for (int i = 1; i < points.length; i++) {
+      total += _haversineDistance(
+        points[i - 1].latitude!,
+        points[i - 1].longitude!,
+        points[i].latitude!,
+        points[i].longitude!,
+      );
+    }
+    return total;
+  }
+
+  static int _calculateFallbackPlacesVisited(List<ActivityRecord> records) {
+    final cells = <String>{};
+    for (final record in records) {
+      if (record.eventType != ActivityEventType.locationUpdate ||
+          record.latitude == null ||
+          record.longitude == null) {
+        continue;
+      }
+      final latCell = (record.latitude! * 1000).floor();
+      final lngCell = (record.longitude! * 1000).floor();
+      cells.add('$latCell:$lngCell');
+    }
+    return cells.length;
+  }
+
+  static double _haversineDistance(
+      double lat1, double lng1, double lat2, double lng2) {
+    const earthRadius = 6371000.0;
+    final dLat = _toRadians(lat2 - lat1);
+    final dLng = _toRadians(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  static double _toRadians(double degrees) => degrees * math.pi / 180;
 }
 
 class _SummaryCard extends StatelessWidget {
@@ -610,7 +984,7 @@ class _MovementChartCard extends ConsumerWidget {
         return counts.map((c) => c / maxVal).toList();
       },
       loading: () => List<double>.filled(24, 0.0),
-      error: (_, __) => List<double>.filled(24, 0.0),
+      error: (error, stackTrace) => List<double>.filled(24, 0.0),
     );
 
     // Find peak hour
@@ -749,7 +1123,11 @@ class _RecentActivityFeed extends ConsumerWidget {
 
     return feedAsync.when(
       data: (records) {
-        if (records.isEmpty) {
+        final notableEvents = records
+            .where((record) => record.eventType != ActivityEventType.locationUpdate)
+            .toList();
+
+        if (notableEvents.isEmpty) {
           return Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -758,7 +1136,7 @@ class _RecentActivityFeed extends ConsumerWidget {
             ),
             child: Center(
               child: Text(
-                'No activity recorded yet',
+                'No notable activity yet',
                 style: TextStyle(color: Colors.grey[500], fontSize: 14),
               ),
             ),
@@ -779,11 +1157,11 @@ class _RecentActivityFeed extends ConsumerWidget {
           ),
           child: Column(
             children: List.generate(
-              records.length > 10 ? 10 : records.length,
+              notableEvents.length > 10 ? 10 : notableEvents.length,
               (i) {
-                final record = records[i];
+                final record = notableEvents[i];
                 final isLast =
-                    i == (records.length > 10 ? 9 : records.length - 1);
+                    i == (notableEvents.length > 10 ? 9 : notableEvents.length - 1);
                 return _buildEventTile(record, isLast);
               },
             ),
@@ -791,7 +1169,7 @@ class _RecentActivityFeed extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => Container(
+      error: (error, stackTrace) => Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: AppColors.surfaceColor,
@@ -934,17 +1312,29 @@ class _EventDisplayInfo {
 }
 
 // ─── Location History Timeline ────────────────────────────────────────
-class _LocationHistoryTimeline extends ConsumerWidget {
+class _LocationHistoryTimeline extends ConsumerStatefulWidget {
   final double screenWidth;
   const _LocationHistoryTimeline({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LocationHistoryTimeline> createState() =>
+      _LocationHistoryTimelineState();
+}
+
+class _LocationHistoryTimelineState
+    extends ConsumerState<_LocationHistoryTimeline> {
+  static const _initialLimit = 15;
+  bool _showAll = false;
+
+  @override
+  Widget build(BuildContext context) {
     final historyAsync = ref.watch(locationHistoryProvider);
 
     return historyAsync.when(
       data: (records) {
-        if (records.isEmpty) {
+        final displayedRecords = _downsampleHistory(records);
+
+        if (displayedRecords.isEmpty) {
           return Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -960,21 +1350,49 @@ class _LocationHistoryTimeline extends ConsumerWidget {
           );
         }
 
+        final totalCount = displayedRecords.length;
+        final visibleCount =
+            _showAll ? totalCount : totalCount.clamp(0, _initialLimit);
+
         return Column(
-          children: List.generate(
-            records.length > 10 ? 10 : records.length,
-            (i) {
-              final record = records[records.length - 1 - i]; // Reverse: newest first
-              final isLast =
-                  i == (records.length > 10 ? 9 : records.length - 1);
-              final isCurrent = i == 0;
-              return _buildLocationTile(record, isLast, isCurrent);
-            },
-          ),
+          children: [
+            ...List.generate(
+              visibleCount,
+              (i) {
+                final record =
+                    displayedRecords[displayedRecords.length - 1 - i];
+                final isLast = i == visibleCount - 1;
+                final isCurrent = i == 0;
+                return _buildLocationTile(record, isLast, isCurrent);
+              },
+            ),
+            if (!_showAll && totalCount > _initialLimit) ...[
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: () => setState(() => _showAll = true),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+                  decoration: BoxDecoration(
+                    gradient: AppGradients.button,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Show All (${totalCount - _initialLimit} more)',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => Container(
+      error: (error, stackTrace) => Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: AppColors.surfaceColor,
@@ -990,11 +1408,71 @@ class _LocationHistoryTimeline extends ConsumerWidget {
     );
   }
 
+  static List<ActivityRecord> _downsampleHistory(List<ActivityRecord> records) {
+    if (records.isEmpty) return records;
+
+    final sorted = [...records]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final sampled = <ActivityRecord>[];
+
+    ActivityRecord? lastKept;
+    for (final record in sorted) {
+      if (lastKept == null) {
+        sampled.add(record);
+        lastKept = record;
+        continue;
+      }
+
+      if (record.latitude == null ||
+          record.longitude == null ||
+          lastKept.latitude == null ||
+          lastKept.longitude == null) {
+        sampled.add(record);
+        lastKept = record;
+        continue;
+      }
+
+      final distanceMeters = _haversineDistance(
+        lastKept.latitude!,
+        lastKept.longitude!,
+        record.latitude!,
+        record.longitude!,
+      );
+      final minutesGap = record.timestamp.difference(lastKept.timestamp).inMinutes;
+
+      if (distanceMeters >= 100 || minutesGap >= 5) {
+        sampled.add(record);
+        lastKept = record;
+      }
+    }
+
+    if (sampled.isNotEmpty && sampled.last.id != sorted.last.id) {
+      sampled.add(sorted.last);
+    }
+
+    return sampled;
+  }
+
+  static double _haversineDistance(
+      double lat1, double lng1, double lat2, double lng2) {
+    const earthRadius = 6371000.0;
+    final dLat = _toRadians(lat2 - lat1);
+    final dLng = _toRadians(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  static double _toRadians(double degrees) => degrees * math.pi / 180;
+
   Widget _buildLocationTile(
       ActivityRecord record, bool isLast, bool isCurrent) {
     final timeStr = DateFormat('h:mm a').format(record.timestamp);
     final coords =
-        '${record.latitude?.toStringAsFixed(4)}, ${record.longitude?.toStringAsFixed(4)}';
+      '${record.latitude?.toStringAsFixed(4)}, ${record.longitude?.toStringAsFixed(4)}';
 
     return IntrinsicHeight(
       child: Row(
@@ -1073,19 +1551,32 @@ class _LocationHistoryTimeline extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          coords,
-                          style: TextStyle(
-                            fontSize: scaledFontSize(14, screenWidth),
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primaryColor,
+                        if (record.latitude != null && record.longitude != null)
+                          _ResolvedLocationText(
+                            latitude: record.latitude!,
+                            longitude: record.longitude!,
+                            fallback: coords,
+                            resolvingText: 'Resolving location...',
+                            style: TextStyle(
+                              fontSize: scaledFontSize(14, widget.screenWidth),
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primaryColor,
+                            ),
+                          )
+                        else
+                          Text(
+                            'Location unavailable',
+                            style: TextStyle(
+                              fontSize: scaledFontSize(14, widget.screenWidth),
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primaryColor,
+                            ),
                           ),
-                        ),
                         const SizedBox(height: 4),
                         Text(
                           timeStr,
                           style: TextStyle(
-                            fontSize: scaledFontSize(10, screenWidth),
+                            fontSize: scaledFontSize(10, widget.screenWidth),
                             color: Colors.grey[500],
                           ),
                         ),
@@ -1093,6 +1584,112 @@ class _LocationHistoryTimeline extends ConsumerWidget {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResolvedLocationText extends StatelessWidget {
+  final double latitude;
+  final double longitude;
+  final String fallback;
+  final String resolvingText;
+  final TextStyle style;
+
+  const _ResolvedLocationText({
+    required this.latitude,
+    required this.longitude,
+    required this.fallback,
+    this.resolvingText = 'Resolving location...',
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: GeocodingUtils.reverseGeocodeCoordinates(latitude, longitude),
+      builder: (context, snapshot) {
+        final label = snapshot.data;
+        final displayText = snapshot.connectionState == ConnectionState.waiting
+            ? resolvingText
+            : (label != null && label.isNotEmpty)
+                ? label
+                : fallback;
+        return Text(
+          displayText,
+          style: style,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        );
+      },
+    );
+  }
+}
+
+// ─── Full Screen Map Page ─────────────────────────────────────────────
+class _FullScreenMapPage extends StatelessWidget {
+  final LatLng initialTarget;
+  final Set<Marker> markers;
+  final Set<Polyline> polylines;
+  final Set<Circle> circles;
+
+  const _FullScreenMapPage({
+    required this.initialTarget,
+    required this.markers,
+    required this.polylines,
+    required this.circles,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: initialTarget,
+              zoom: 16,
+            ),
+            markers: markers,
+            polylines: polylines,
+            circles: circles,
+            mapToolbarEnabled: false,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            compassEnabled: true,
+          ),
+          // Close button
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            left: 12,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceColor.withAlpha(230),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(60),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    size: 22,
+                    color: AppColors.primaryColor,
+                  ),
+                ),
               ),
             ),
           ),

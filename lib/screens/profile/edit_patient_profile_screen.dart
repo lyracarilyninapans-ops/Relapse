@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -92,6 +93,17 @@ class _EditPatientProfileScreenState
           .read(patientRemoteSourceProvider)
           .savePatient(authUser.uid, updated);
 
+      // Push the updated patient name to the watch so it reflects immediately.
+      try {
+        await ref.read(watchServiceProvider).updatePatientInfo(
+              authUser.uid,
+              patientName: name,
+              patientId: patient.id,
+            );
+      } catch (_) {
+        // Non-critical — watch will still work, just with stale name.
+      }
+
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
@@ -123,6 +135,7 @@ class _EditPatientProfileScreenState
             const SizedBox(height: 20),
 
             ProfilePictureCircle(
+              localImageFile: _pickedPhoto,
               imageUrl: _pickedPhoto != null ? null : _existingPhotoUrl,
               onCameraTap: _pickProfilePhoto,
             ),

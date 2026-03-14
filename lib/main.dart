@@ -3,19 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'routes.dart';
 import 'theme/app_theme.dart';
 import 'screens/screens.dart';
 import 'services/notification_service.dart';
 import 'services/connectivity_service.dart';
-import 'providers/settings_providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
-  // Enable Firestore offline persistence
+  // Enable Firestore offline persistence — local cache is only used
+  // as a fallback when the device is offline. Cloud is the source of truth.
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
@@ -32,15 +31,9 @@ Future<void> main() async {
   final connectivityService = ConnectivityPlusService();
   await connectivityService.initialize();
 
-  // Initialize SharedPreferences
-  final prefs = await SharedPreferences.getInstance();
-
   runApp(
-    ProviderScope(
-      overrides: [
-        sharedPreferencesProvider.overrideWithValue(prefs),
-      ],
-      child: const RelapseApp(),
+    const ProviderScope(
+      child: RelapseApp(),
     ),
   );
 }

@@ -6,7 +6,6 @@ import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/providers/memory_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/routes.dart';
-import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
@@ -23,6 +22,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
   bool _isSearching = false;
   final _searchController = TextEditingController();
   GoogleMapController? _mapController;
+  bool _pendingInitialFocus = true;
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
@@ -53,6 +53,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
         position: patientPos,
         infoWindow: InfoWindow(title: patientName),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        alpha: 0,
       ));
     }
 
@@ -76,32 +77,36 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
   Future<void> _focusReminder(MemoryReminder reminder) async {
     if (_mapController == null ||
         reminder.latitude == null ||
-        reminder.longitude == null) return;
+        reminder.longitude == null) {
+      return;
+    }
     await _mapController!.animateCamera(
       CameraUpdate.newLatLng(LatLng(reminder.latitude!, reminder.longitude!)),
     );
   }
 
-  Future<void> _centerOnAll(
-      List<MemoryReminder> reminders, LatLng? patientPos) async {
-    if (_mapController == null) return;
-
-    final points = <LatLng>[];
-    for (final r in reminders) {
-      if (r.latitude != null && r.longitude != null) {
-        points.add(LatLng(r.latitude!, r.longitude!));
-      }
+  /// Latest patient position from live location stream.
+  LatLng? _computePatientPosition() {
+    final liveRecord = ref.read(liveLocationProvider).valueOrNull;
+    if (liveRecord != null &&
+        liveRecord.latitude != null &&
+        liveRecord.longitude != null) {
+      return LatLng(liveRecord.latitude!, liveRecord.longitude!);
     }
-    if (patientPos != null) points.add(patientPos);
+    return null;
+  }
 
-    if (points.isEmpty) return;
-    if (points.length == 1) {
-      await _mapController!
-          .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
-    } else {
-      final bounds = boundsFromPoints(points);
-      await _mapController!
-          .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  /// Attempts to auto-focus the map on the best available position.
+  /// Called from onMapCreated and post-frame callbacks until successful.
+  void _tryAutoFocus() {
+    if (!_pendingInitialFocus || _mapController == null) {
+      return;
+    }
+    final pos = _computePatientPosition();
+    debugPrint('[MemoryScreen] _tryAutoFocus: pos=$pos');
+    if (pos != null) {
+      _pendingInitialFocus = false;
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
     }
   }
 
@@ -136,10 +141,17 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
     final hasMemories = reminders.isNotEmpty;
 
     final patientPos = liveLocation.whenOrNull(
-      data: (record) => record != null && record.latitude != null
+      data: (record) => record != null &&
+          record.latitude != null &&
+          record.longitude != null
           ? LatLng(record.latitude!, record.longitude!)
           : null,
     );
+
+    // Auto-focus: schedule after each build until successful
+    if (_pendingInitialFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
 
     final query = _searchController.text.toLowerCase();
     final filteredReminders = query.isEmpty
@@ -186,7 +198,10 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
         children: [
           GoogleMap(
             initialCameraPosition: _initialCameraPosition,
-            onMapCreated: (controller) => _mapController = controller,
+            onMapCreated: (controller) {
+              _mapController = controller;
+              _tryAutoFocus();
+            },
             markers: _buildMarkers(reminders, patientPos),
             circles: _buildCircles(reminders),
             compassEnabled: true,
@@ -267,8 +282,9 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
                         shrinkWrap: true,
                         padding: EdgeInsets.zero,
                         itemCount: filteredReminders.length.clamp(0, 5),
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) => ListTile(
+                        separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
+                        itemBuilder: (context, i) => ListTile(
                           leading: const Icon(Icons.location_on,
                               color: Colors.blue),
                           title: Text(filteredReminders[i].title),
@@ -289,7 +305,18 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
           FloatingActionButton.small(
             heroTag: 'memory_center_fab',
             backgroundColor: AppColors.surfaceColor,
-            onPressed: () => _centerOnAll(reminders, patientPos),
+            onPressed: () {
+              final pos = _computePatientPosition();
+              if (pos != null) {
+                _mapController?.animateCamera(
+                    CameraUpdate.newLatLngZoom(pos, 15));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text('No location data available yet')),
+                );
+              }
+            },
             child: const Icon(
               Icons.center_focus_strong,
               color: AppColors.primaryColor,

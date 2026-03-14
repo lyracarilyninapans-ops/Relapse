@@ -35,7 +35,7 @@ class MemoryReminderListScreen extends ConsumerWidget {
           return _buildList(context, ref, active);
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, __) => Center(
+        error: (error, stackTrace) => Center(
           child: Text(
             'Unable to load reminders',
             style: TextStyle(color: Colors.grey[500]),
@@ -92,7 +92,7 @@ class MemoryReminderListScreen extends ConsumerWidget {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: reminders.length,
-      itemBuilder: (_, i) => _ReminderCard(
+      itemBuilder: (context, i) => _ReminderCard(
         reminder: reminders[i],
         onDelete: () => _deleteReminder(context, ref, reminders[i]),
         onTap: () {
@@ -256,7 +256,7 @@ class _ReminderCard extends StatelessWidget {
         child: Image.network(
           photoItem.cloudUrl!,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _photoPlaceholder(),
+          errorBuilder: (context, error, stackTrace) => _photoPlaceholder(),
         ),
       );
     }

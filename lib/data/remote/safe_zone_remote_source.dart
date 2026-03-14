@@ -39,9 +39,27 @@ class SafeZoneRemoteSource {
   /// Create or update a safe zone.
   Future<void> saveSafeZone(
       String uid, String patientId, SafeZone safeZone) async {
-    await _safeZoneCollection(uid, patientId)
-        .doc(safeZone.id)
-        .set(safeZone.toJson(), SetOptions(merge: true));
+    await upsertSafeZone(uid, patientId, safeZone);
+  }
+
+  /// Create or update a safe zone and return the persisted model.
+  Future<SafeZone> upsertSafeZone(
+      String uid, String patientId, SafeZone safeZone) async {
+    final zones = _safeZoneCollection(uid, patientId);
+    final zoneId = safeZone.id.trim();
+
+    if (zoneId.isEmpty) {
+      final doc = zones.doc();
+      final saved = safeZone.copyWith(id: doc.id);
+      final payload = saved.toJson();
+      await doc.set(payload, SetOptions(merge: true));
+      return saved;
+    }
+
+    final saved = safeZone.copyWith(id: zoneId);
+    final payload = saved.toJson();
+    await zones.doc(zoneId).set(payload, SetOptions(merge: true));
+    return saved;
   }
 
   /// Delete a safe zone.

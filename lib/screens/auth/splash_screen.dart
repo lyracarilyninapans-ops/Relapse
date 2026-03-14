@@ -38,7 +38,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         // Still loading — listen for the first emission
         _waitForAuth();
       },
-      error: (_, __) {
+      error: (error, stackTrace) {
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, Routes.login);
       },
@@ -87,7 +87,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   width: 200,
                   height: 200,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, _, _) => Container(
+                  errorBuilder: (context, error, stackTrace) => Container(
                     width: 200,
                     height: 200,
                     decoration: const BoxDecoration(

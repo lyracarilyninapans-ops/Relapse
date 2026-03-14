@@ -26,11 +26,18 @@ class PatientRemoteSource {
     return Patient.fromJson({...doc.data()!, 'id': doc.id});
   }
 
-  /// Create or update a patient.
-  Future<void> savePatient(String uid, Patient patient) async {
-    await _patientCollection(uid)
-        .doc(patient.id)
-        .set(patient.toJson(), SetOptions(merge: true));
+  /// Create or update a patient. Returns the document ID.
+  Future<String> savePatient(String uid, Patient patient) async {
+    if (patient.id.isEmpty) {
+      // Auto-generate a Firestore document ID for new patients.
+      final docRef = await _patientCollection(uid).add(patient.toJson());
+      return docRef.id;
+    } else {
+      await _patientCollection(uid)
+          .doc(patient.id)
+          .set(patient.toJson(), SetOptions(merge: true));
+      return patient.id;
+    }
   }
 
   /// Delete a patient.
@@ -43,5 +50,15 @@ class PatientRemoteSource {
     await _patientCollection(uid).doc(patientId).update({
       'pairedWatchId': FieldValue.delete(),
     });
+  }
+
+  /// Update reminder cooldown setting used by watch reminder trigger logic.
+  Future<void> setReminderCooldownMinutes(
+      String uid, String patientId, int minutes) async {
+    await _patientCollection(uid).doc(patientId).set({
+      'settings': {
+        'reminderCooldownMinutes': minutes,
+      }
+    }, SetOptions(merge: true));
   }
 }

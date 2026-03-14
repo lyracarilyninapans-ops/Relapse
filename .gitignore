@@ -53,3 +53,8 @@ ios/Runner/GoogleService-Info.plist
 
 # Firebase Functions dependencies
 functions/node_modules/
+functions/lib/
+
+# JVM crash/replay logs
+hs_err_pid*.log
+replay_pid*.log

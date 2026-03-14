@@ -10,7 +10,6 @@ import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/routes.dart';
-import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -25,6 +24,7 @@ class SafeZoneConfigScreen extends ConsumerStatefulWidget {
 
 class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
   GoogleMapController? _mapController;
+  bool _pendingInitialFocus = true;
   double _radius = 500;
   bool _locationSelected = false;
   String _watchBehavior = 'vibrate';
@@ -60,7 +60,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
     }
   }
 
-  Set<Marker> get _markers {
+  Set<Marker> _buildMarkers(LatLng? patientPos) {
     final markers = <Marker>{
       Marker(
         markerId: const MarkerId('safe_zone_center'),
@@ -69,15 +69,13 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
       ),
     };
 
-    final liveLocation = ref.read(liveLocationProvider).valueOrNull;
-    if (liveLocation != null &&
-        liveLocation.latitude != null &&
-        liveLocation.longitude != null) {
+    if (patientPos != null) {
       markers.add(Marker(
         markerId: const MarkerId('patient_location'),
-        position: LatLng(liveLocation.latitude!, liveLocation.longitude!),
+        position: patientPos,
         infoWindow: InfoWindow(
-            title: ref.read(selectedPatientProvider)?.name ?? 'Patient'),
+          title: ref.read(selectedPatientProvider)?.name ?? 'Patient',
+        ),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
       ));
     }
@@ -85,25 +83,40 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
     return markers;
   }
 
-  Future<void> _centerOnLocations() async {
+  LatLng? _computePatientPosition() {
+    final liveRecord = ref.read(liveLocationProvider).valueOrNull;
+    if (liveRecord != null &&
+        liveRecord.latitude != null &&
+        liveRecord.longitude != null) {
+      return LatLng(liveRecord.latitude!, liveRecord.longitude!);
+    }
+    return null;
+  }
+
+  void _tryAutoFocus() {
+    if (!_pendingInitialFocus || _mapController == null) return;
+    final pos = _computePatientPosition();
+    if (pos != null) {
+      _pendingInitialFocus = false;
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
+    }
+  }
+
+  Future<void> _centerOnPatient() async {
     final controller = _mapController;
     if (controller == null) return;
 
-    final points = <LatLng>[_safeZoneCenter];
-    final liveLocation = ref.read(liveLocationProvider).valueOrNull;
-    if (liveLocation?.latitude != null) {
-      points.add(LatLng(liveLocation!.latitude!, liveLocation.longitude!));
+    final pos = _computePatientPosition();
+    if (pos == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No location data available yet')),
+      );
+      return;
     }
 
     try {
-      if (points.length == 1) {
-        await controller
-            .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
-      } else {
-        final bounds = boundsFromPoints(points);
-        await controller
-            .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
-      }
+      await controller.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
     } catch (_) {
       // Camera animation can fail if map is not fully ready; safe to ignore.
     }
@@ -129,6 +142,10 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
 
     try {
       final existingZone = ref.read(primarySafeZoneProvider);
+      final alarmOnExit =
+          _alertOnExit && (_watchBehavior == 'alarm' || _watchBehavior == 'both');
+      final vibrationOnExit =
+          _alertOnExit && (_watchBehavior == 'vibrate' || _watchBehavior == 'both');
       final zone = SafeZone(
         id: existingZone?.id ?? '',
         patientId: patientId,
@@ -136,22 +153,14 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         centerLng: _safeZoneCenter.longitude,
         radiusMeters: _radius,
         isActive: true,
-        alarmEnabled: _watchBehavior == 'alarm' || _watchBehavior == 'both',
-        vibrationEnabled:
-            _watchBehavior == 'vibrate' || _watchBehavior == 'both',
+        alarmEnabled: alarmOnExit,
+        vibrationEnabled: vibrationOnExit,
         alertOnExit: _alertOnExit,
       );
 
-      if (existingZone != null) {
-        await ref
-            .read(safeZoneRemoteSourceProvider)
-            .saveSafeZone(authUser.uid, patientId, zone);
-      } else {
-        // New zone — let Firestore generate ID
-        await ref
-            .read(safeZoneRemoteSourceProvider)
-            .saveSafeZone(authUser.uid, patientId, zone);
-      }
+      await ref
+          .read(safeZoneRemoteSourceProvider)
+          .upsertSafeZone(authUser.uid, patientId, zone);
 
       if (!mounted) return;
       Navigator.pop(context);
@@ -193,6 +202,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
       await ref
           .read(safeZoneRemoteSourceProvider)
           .deleteSafeZone(authUser.uid, patientId, existingZone.id);
+
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
@@ -210,8 +220,21 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
     final sh = MediaQuery.of(context).size.height;
     final szStatus = ref.watch(safeZoneStatusProvider);
+    final liveLocation = ref.watch(liveLocationProvider);
+    final patientPos = liveLocation.whenOrNull(
+      data: (record) => record != null &&
+              record.latitude != null &&
+              record.longitude != null
+          ? LatLng(record.latitude!, record.longitude!)
+          : null,
+    );
+
+    if (_pendingInitialFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -232,6 +255,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         ],
       ),
       body: SingleChildScrollView(
+        padding: EdgeInsets.only(bottom: mediaQuery.viewPadding.bottom + 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -267,8 +291,10 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
                     RepaintBoundary(
                       child: GoogleMap(
                         initialCameraPosition: _initialCameraPosition,
-                        onMapCreated: (controller) =>
-                            _mapController = controller,
+                        onMapCreated: (controller) {
+                          _mapController = controller;
+                          _tryAutoFocus();
+                        },
                         onTap: (latLng) {
                           setState(() {
                             _safeZoneCenter = latLng;
@@ -281,7 +307,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
                             () => EagerGestureRecognizer(),
                           ),
                         },
-                        markers: _markers,
+                        markers: _buildMarkers(patientPos),
                         circles: _circles,
                         compassEnabled: true,
                         zoomControlsEnabled: true,
@@ -299,7 +325,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
                       child: FloatingActionButton.small(
                         heroTag: 'safe_zone_config_center_fab',
                         backgroundColor: AppColors.surfaceColor,
-                        onPressed: _centerOnLocations,
+                        onPressed: _centerOnPatient,
                         child: const Icon(
                           Icons.center_focus_strong,
                           color: AppColors.primaryColor,
@@ -582,38 +608,42 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
                   fontWeight: FontWeight.w600,
                 ),
           ),
-          RadioListTile<String>(
-            value: 'vibrate',
-            groupValue: _watchBehavior,
-            activeColor: AppColors.primaryColor,
-            title: const Text('Vibrate Only'),
-            subtitle: Text('Watch vibrates when leaving zone',
-                style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-            onChanged: (val) {
-              if (val != null) setState(() => _watchBehavior = val);
-            },
-          ),
-          RadioListTile<String>(
-            value: 'alarm',
-            groupValue: _watchBehavior,
-            activeColor: AppColors.primaryColor,
-            title: const Text('Sound Alarm'),
-            subtitle: Text('Watch plays alarm sound',
-                style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-            onChanged: (val) {
-              if (val != null) setState(() => _watchBehavior = val);
-            },
-          ),
-          RadioListTile<String>(
-            value: 'both',
-            groupValue: _watchBehavior,
-            activeColor: AppColors.primaryColor,
-            title: const Text('Vibrate + Alarm'),
-            subtitle: Text('Both vibration and alarm',
-                style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-            onChanged: (val) {
-              if (val != null) setState(() => _watchBehavior = val);
-            },
+          IgnorePointer(
+            ignoring: !_alertOnExit,
+            child: Opacity(
+              opacity: _alertOnExit ? 1 : 0.55,
+              child: RadioGroup<String>(
+                groupValue: _watchBehavior,
+                onChanged: (val) {
+                  if (val != null) setState(() => _watchBehavior = val);
+                },
+                child: Column(
+                  children: [
+                    RadioListTile<String>(
+                      value: 'vibrate',
+                      activeColor: AppColors.primaryColor,
+                      title: const Text('Vibrate Only'),
+                      subtitle: Text('Watch vibrates when leaving zone',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                    RadioListTile<String>(
+                      value: 'alarm',
+                      activeColor: AppColors.primaryColor,
+                      title: const Text('Sound Alarm'),
+                      subtitle: Text('Watch plays alarm sound',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                    RadioListTile<String>(
+                      value: 'both',
+                      activeColor: AppColors.primaryColor,
+                      title: const Text('Vibrate + Alarm'),
+                      subtitle: Text('Both vibration and alarm',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
           const Divider(),
           SwitchListTile(
@@ -709,7 +739,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
             },
             loading: () =>
                 const Center(child: CircularProgressIndicator()),
-            error: (_, __) => Text(
+            error: (error, stackTrace) => Text(
               'Unable to load events',
               style: TextStyle(color: Colors.grey[500], fontSize: 14),
             ),

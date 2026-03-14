@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/media_upload_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/models/patient.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
@@ -56,11 +57,12 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
       // Upload profile photo if picked
       String? photoUrl;
       if (_pickedPhoto != null) {
-        photoUrl = await ref.read(mediaUploadServiceProvider).uploadProfilePhoto(
-          file: _pickedPhoto!,
-          uid: authUser.uid,
-          subPath: 'patient_new',
-        );
+        photoUrl =
+            await ref.read(mediaUploadServiceProvider).uploadProfilePhoto(
+                  file: _pickedPhoto!,
+                  uid: authUser.uid,
+                  subPath: 'patient_new',
+                );
       }
 
       final patient = Patient(
@@ -76,10 +78,17 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
         createdAt: DateTime.now(),
       );
 
-      await ref.read(patientRemoteSourceProvider).savePatient(
+      final patientDocId = await ref.read(patientRemoteSourceProvider).savePatient(
             authUser.uid,
             patient,
           );
+
+      // Mark pairing as fully completed now that the patient profile exists.
+      await ref.read(watchServiceProvider).finalizePairing(
+        authUser.uid,
+        patientName: name,
+        patientId: patientDocId,
+      );
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.main);
@@ -92,11 +101,55 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
     }
   }
 
+  /// Skip patient setup but still save a minimal patient and finalize pairing.
+  Future<void> _skipSetup() async {
+    final authUser = ref.read(authStateProvider).valueOrNull;
+    if (authUser == null) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      final watchId = ModalRoute.of(context)?.settings.arguments as String?;
+
+      // Create a placeholder patient so the app enters paired mode.
+      final patient = Patient(
+        id: '',
+        caregiverUid: authUser.uid,
+        name: 'Patient',
+        pairedWatchId: watchId,
+        createdAt: DateTime.now(),
+      );
+
+      final patientDocId = await ref.read(patientRemoteSourceProvider).savePatient(
+            authUser.uid,
+            patient,
+          );
+
+      // Finalize the pairing status.
+      await ref.read(watchServiceProvider).finalizePairing(
+        authUser.uid,
+        patientName: 'Patient',
+        patientId: patientDocId,
+      );
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, Routes.main);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to skip: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
         title: const Text('Setup Patient Profile'),
@@ -104,150 +157,155 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
         elevation: 0,
         actions: [
           TextButton(
-            onPressed: _isSaving
-                ? null
-                : () {
-                    Navigator.pushReplacementNamed(context, Routes.main);
-                  },
+            onPressed: _isSaving ? null : _skipSetup,
             child: const Text('Skip'),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-
-            // Success icon
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: const BoxDecoration(
-                gradient: AppGradients.primaryAction,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.check_circle_outline,
-                size: 64,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            Text(
-              'Patient Linked Successfully!',
-              style: TextStyle(
-                fontSize: scaledFontSize(24, sw),
-                fontWeight: FontWeight.bold,
-                color: AppColors.primaryColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-
-            Text(
-              "Now let's set up their profile",
-              style: TextStyle(
-                fontSize: scaledFontSize(16, sw),
-                color: Colors.grey[600],
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-
-            // Profile picture
-            ProfilePictureCircle(
-              onCameraTap: () async {
-                final uploadService = ref.read(mediaUploadServiceProvider);
-                final file = await uploadService.pickPhoto();
-                if (file != null && mounted) {
-                  setState(() => _pickedPhoto = file);
-                }
-              },
-            ),
-            const SizedBox(height: 32),
-
-            // Name
-            TextFormField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                labelText: 'Patient Name *',
-                prefixIcon: const Icon(Icons.person_outline),
-                filled: true,
-                fillColor: AppColors.surfaceColor,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.gradientMiddle,
-                    width: 2,
+      body: SafeArea(
+        child: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottomInset),
+            child: Column(
+              children: [
+                // Success icon
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: const BoxDecoration(
+                    gradient: AppGradients.primaryAction,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_outline,
+                    size: 52,
+                    color: Colors.white,
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
-            // Age
-            TextFormField(
-              controller: _ageController,
-              decoration: InputDecoration(
-                labelText: 'Age (Optional)',
-                prefixIcon: const Icon(Icons.cake_outlined),
-                filled: true,
-                fillColor: AppColors.surfaceColor,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+                Text(
+                  'Patient Linked Successfully!',
+                  style: TextStyle(
+                    fontSize: scaledFontSize(22, sw),
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primaryColor,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.gradientMiddle,
-                    width: 2,
+                const SizedBox(height: 6),
+
+                Text(
+                  "Now let's set up their profile",
+                  style: TextStyle(
+                    fontSize: scaledFontSize(15, sw),
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+
+                // Profile picture
+                ProfilePictureCircle(
+                  localImageFile: _pickedPhoto,
+                  onCameraTap: () async {
+                    final uploadService =
+                        ref.read(mediaUploadServiceProvider);
+                    final file = await uploadService.pickPhoto();
+                    if (file != null && mounted) {
+                      setState(() => _pickedPhoto = file);
+                    }
+                  },
+                ),
+                const SizedBox(height: 24),
+
+                // Name
+                TextFormField(
+                  controller: _nameController,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: 'Patient Name *',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    filled: true,
+                    fillColor: AppColors.surfaceColor,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppColors.gradientMiddle,
+                        width: 2,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
-            // Notes
-            TextFormField(
-              controller: _notesController,
-              maxLines: 3,
-              maxLength: 500,
-              decoration: InputDecoration(
-                labelText: 'Notes (Optional)',
-                prefixIcon: const Icon(Icons.notes_outlined),
-                filled: true,
-                fillColor: AppColors.surfaceColor,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+                // Age
+                TextFormField(
+                  controller: _ageController,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: 'Age (Optional)',
+                    prefixIcon: const Icon(Icons.cake_outlined),
+                    filled: true,
+                    fillColor: AppColors.surfaceColor,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppColors.gradientMiddle,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  keyboardType: TextInputType.number,
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.gradientMiddle,
-                    width: 2,
+                const SizedBox(height: 14),
+
+                // Notes
+                TextFormField(
+                  controller: _notesController,
+                  maxLines: 3,
+                  maxLength: 500,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: 'Notes (Optional)',
+                    prefixIcon: const Icon(Icons.notes_outlined),
+                    filled: true,
+                    fillColor: AppColors.surfaceColor,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppColors.gradientMiddle,
+                        width: 2,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 32),
+                const SizedBox(height: 24),
 
-            CtaButton(
-              text: 'Complete Setup',
-              onPressed: _isSaving ? null : _completeSetup,
-              isLoading: _isSaving,
-            ),
-            const SizedBox(height: 16),
+                CtaButton(
+                  text: 'Complete Setup',
+                  onPressed: _isSaving ? null : _completeSetup,
+                  isLoading: _isSaving,
+                ),
+                const SizedBox(height: 16),
 
-            const InfoBox(
-              text:
-                  'You can update this information anytime from the patient profile settings.',
+                const InfoBox(
+                  text:
+                      'You can update this information anytime from the patient profile settings.',
+                ),
+                const SizedBox(height: 16),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

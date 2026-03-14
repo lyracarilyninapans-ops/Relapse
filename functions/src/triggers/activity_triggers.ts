@@ -138,3 +138,89 @@ export const onActivityRecordForSummary = onDocumentCreated(
     logger.info("Daily summary updated", { uid, patientId, dateStr });
   },
 );
+
+/**
+ * Trigger 3: onActivityRecordToSafeZoneEvent
+ * Mirrors safe_zone_enter/exit activity records into safeZoneEvents.
+ */
+export const onActivityRecordToSafeZoneEvent = onDocumentCreated(
+  {
+    document: "users/{uid}/patients/{patientId}/activityRecords/{recordId}",
+    region: REGION,
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+
+    const { uid, patientId, recordId } = event.params;
+    const data = snap.data() as ActivityRecord;
+
+    if (!data.timestamp || !data.eventType) return;
+
+    const mappedEventType = data.eventType === "safe_zone_exit"
+      ? "exit"
+      : data.eventType === "safe_zone_enter"
+        ? "enter"
+        : null;
+
+    if (!mappedEventType) return;
+
+    const lockPath = paths.functionLocks(uid, patientId);
+    const lockId = `safezone_from_activity_${recordId}`;
+    if (await isProcessed(lockPath, lockId)) return;
+
+    let safeZoneId = "unknown";
+
+    const metadata = data.metadata;
+    if (metadata && typeof metadata === "object" && "safeZoneId" in metadata) {
+      const maybeId = (metadata as Record<string, unknown>)["safeZoneId"];
+      if (typeof maybeId === "string" && maybeId.trim().length > 0) {
+        safeZoneId = maybeId.trim();
+      }
+    }
+
+    if (safeZoneId === "unknown") {
+      try {
+        const activeZonesSnap = await admin.firestore()
+          .collection(paths.safeZones(uid, patientId))
+          .where("isActive", "==", true)
+          .limit(1)
+          .get();
+
+        if (!activeZonesSnap.empty) {
+          safeZoneId = activeZonesSnap.docs[0].id;
+        }
+      } catch (err) {
+        logger.warn("Failed to resolve active safe zone while mirroring activity", {
+          uid,
+          patientId,
+          recordId,
+          err,
+        });
+      }
+    }
+
+    const eventRef = admin.firestore().doc(`${paths.safeZoneEvents(uid, patientId)}/${recordId}`);
+    await eventRef.set({
+      id: recordId,
+      patientId,
+      safeZoneId,
+      eventType: mappedEventType,
+      timestamp: data.timestamp,
+      latitude: data.latitude ?? null,
+      longitude: data.longitude ?? null,
+      source: "activity_record",
+      sourceRecordId: recordId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    await markProcessed(lockPath, lockId);
+    logger.info("Mirrored activity record to safe zone event", {
+      uid,
+      patientId,
+      recordId,
+      eventType: mappedEventType,
+      safeZoneId,
+    });
+  },
+);

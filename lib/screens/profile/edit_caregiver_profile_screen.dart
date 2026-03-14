@@ -85,7 +85,7 @@ class _EditCaregiverProfileScreenState
             ? null
             : _phoneCtrl.text.trim(),
         'bio': _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
-        if (photoUrl != null) 'photoUrl': photoUrl,
+        'photoUrl': ?photoUrl,
       });
 
       if (mounted) Navigator.pop(context);

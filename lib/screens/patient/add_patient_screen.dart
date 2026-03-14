@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:relapse_flutter/models/pairing_info.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/routes.dart';
@@ -11,7 +11,8 @@ import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
-/// Add Patient screen with pairing code generation and watch listening.
+/// Add Patient screen where the caregiver enters the pairing code
+/// displayed on the patient's watch.
 class AddPatientScreen extends ConsumerStatefulWidget {
   const AddPatientScreen({super.key});
 
@@ -20,55 +21,81 @@ class AddPatientScreen extends ConsumerStatefulWidget {
 }
 
 class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
-  String? _generatedCode;
-  bool _isGenerating = false;
-  bool _isWaiting = false;
-  StreamSubscription<PairingInfo?>? _pairingSub;
+  final List<TextEditingController> _digitControllers =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+  bool _isSubmitting = false;
+  String? _errorMessage;
 
   @override
   void dispose() {
-    _pairingSub?.cancel();
+    for (final c in _digitControllers) {
+      c.dispose();
+    }
+    for (final n in _focusNodes) {
+      n.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _generateCode() async {
+  String get _enteredCode =>
+      _digitControllers.map((c) => c.text).join();
+
+  Future<void> _submitCode() async {
+    final code = _enteredCode;
+    if (code.length != 6) {
+      setState(() => _errorMessage = 'Please enter all 6 digits');
+      return;
+    }
+
     final authUser = ref.read(authStateProvider).valueOrNull;
     if (authUser == null) return;
 
-    setState(() => _isGenerating = true);
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
 
     try {
-      final code = await ref
+      final watchId = await ref
           .read(watchServiceProvider)
-          .generatePairingCode(authUser.uid);
+          .submitPairingCode(authUser.uid, code);
 
       if (!mounted) return;
-      setState(() {
-        _generatedCode = code;
-        _isGenerating = false;
-        _isWaiting = true;
-      });
-
-      // Listen for the watch to pair
-      _pairingSub?.cancel();
-      _pairingSub = ref
-          .read(watchServiceProvider)
-          .watchPairingStatus(authUser.uid)
-          .listen((info) {
-        if (info != null && info.status == PairingStatus.paired && mounted) {
-          Navigator.pushReplacementNamed(
-            context,
-            Routes.patientSetup,
-            arguments: info.watchId,
-          );
-        }
-      });
+      Navigator.pushReplacementNamed(
+        context,
+        Routes.patientSetup,
+        arguments: watchId,
+      );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isGenerating = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to generate code: $e')),
-      );
+      setState(() {
+        _isSubmitting = false;
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  void _onDigitChanged(int index, String value) {
+    setState(() => _errorMessage = null);
+
+    if (value.length == 1 && index < 5) {
+      _focusNodes[index + 1].requestFocus();
+    }
+
+    // Auto-submit when all 6 digits entered
+    if (_enteredCode.length == 6) {
+      _submitCode();
+    }
+  }
+
+  void _onKeyPress(int index, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.backspace &&
+        _digitControllers[index].text.isEmpty &&
+        index > 0) {
+      _digitControllers[index - 1].clear();
+      _focusNodes[index - 1].requestFocus();
     }
   }
 
@@ -77,10 +104,10 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
     final sw = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text('Add Patient'),
-        backgroundColor: AppColors.backgroundColor,
+        backgroundColor: Colors.white,
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -97,7 +124,7 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.person_add_outlined,
+                Icons.watch_outlined,
                 size: 64,
                 color: Colors.white,
               ),
@@ -105,7 +132,7 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
             const SizedBox(height: 32),
 
             Text(
-              'Link Patient Device',
+              'Enter Watch Code',
               style: TextStyle(
                 fontSize: scaledFontSize(24, sw),
                 fontWeight: FontWeight.bold,
@@ -160,12 +187,12 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                   const SizedBox(height: 16),
 
                   // Steps
-                  _buildStep(sw, 1, 'Generate Pairing Code',
-                      'Tap the button below to create a code'),
-                  _buildStep(sw, 2, 'Open Watch App',
+                  _buildStep(sw, 1, 'Open Watch App',
                       'Open the Relapse app on the patient\'s watch'),
-                  _buildStep(sw, 3, 'Enter Code on Watch',
-                      'Type the generated code on the watch'),
+                  _buildStep(sw, 2, 'Find the Code',
+                      'A 6-digit code will appear on the watch screen'),
+                  _buildStep(sw, 3, 'Enter Code Below',
+                      'Type the code shown on the watch into the fields below'),
                   _buildStep(sw, 4, 'Wait for Connection',
                       'The devices will connect automatically'),
                 ],
@@ -173,36 +200,51 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
             ),
             const SizedBox(height: 32),
 
-            // Generated code display
-            if (_generatedCode != null) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    vertical: 20, horizontal: 32),
+            // Code input fields — gradient-bordered container
+            Container(
+              padding: const EdgeInsets.all(2.5),
+              decoration: BoxDecoration(
+                gradient: AppGradients.cardBorder,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
                 decoration: BoxDecoration(
-                  gradient: AppGradients.cardBorder,
-                  borderRadius: BorderRadius.circular(16),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(13.5),
                 ),
                 child: Column(
                   children: [
-                    Text(
+                    GradientText(
                       'Pairing Code',
                       style: TextStyle(
                         fontSize: scaledFontSize(14, sw),
-                        color: Colors.grey[600],
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        for (int i = 0; i < 6; i++) ...[
+                          if (i == 3) const SizedBox(width: 10),
+                          Expanded(child: _buildDigitField(i, sw)),
+                          if (i < 5 && i != 2) const SizedBox(width: 6),
+                          if (i == 2) const SizedBox(width: 0),
+                        ],
+                      ],
+                    ),
+                    if (_errorMessage != null) ...[
+                    const SizedBox(height: 12),
                     Text(
-                      _generatedCode!,
+                      _errorMessage!,
                       style: TextStyle(
-                        fontSize: scaledFontSize(36, sw),
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 12,
-                        color: AppColors.primaryColor,
+                        color: Colors.red[700],
+                        fontSize: scaledFontSize(13, sw),
                       ),
                     ),
-                    if (_isWaiting) ...[
+                  ],
+                    if (_isSubmitting) ...[
                       const SizedBox(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -214,7 +256,7 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Waiting for watch...',
+                            'Connecting to watch...',
                             style: TextStyle(
                               fontSize: scaledFontSize(13, sw),
                               color: AppColors.gradientMiddle,
@@ -227,19 +269,15 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-            ],
+            ),
+            const SizedBox(height: 24),
 
-            // Generate / Regenerate button
+            // Submit button
             CtaButton(
-              text: _generatedCode == null
-                  ? 'Generate Pairing Code'
-                  : 'Regenerate Code',
-              icon: _generatedCode == null
-                  ? Icons.vpn_key_outlined
-                  : Icons.refresh,
-              onPressed: _isGenerating ? null : _generateCode,
-              isLoading: _isGenerating,
+              text: 'Connect Watch',
+              icon: Icons.link,
+              onPressed: _isSubmitting ? null : _submitCode,
+              isLoading: _isSubmitting,
             ),
             const SizedBox(height: 24),
 
@@ -248,6 +286,52 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                   'Need help? Contact support at support@relapsecare.com for assistance with device pairing.',
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// A single digit-entry field wrapped in a gradient border.
+  Widget _buildDigitField(int index, double sw) {
+    final hasError = _errorMessage != null;
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        gradient: hasError
+            ? const LinearGradient(colors: [Colors.red, Colors.red])
+            : AppGradients.cardBorder,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: KeyboardListener(
+          focusNode: FocusNode(),
+          onKeyEvent: (event) => _onKeyPress(index, event),
+          child: TextField(
+            controller: _digitControllers[index],
+            focusNode: _focusNodes[index],
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.number,
+            maxLength: 1,
+            style: TextStyle(
+              fontSize: scaledFontSize(24, sw),
+              fontWeight: FontWeight.bold,
+              color: AppColors.primaryColor,
+            ),
+            decoration: const InputDecoration(
+              counterText: '',
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 8),
+            ),
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+            ],
+            onChanged: (v) => _onDigitChanged(index, v),
+          ),
         ),
       ),
     );

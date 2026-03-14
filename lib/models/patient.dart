@@ -35,8 +35,7 @@ class Patient {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
+    final map = <String, dynamic>{
       'caregiverUid': caregiverUid,
       'name': name,
       'age': age,
@@ -45,6 +44,11 @@ class Patient {
       'pairedWatchId': pairedWatchId,
       'createdAt': Timestamp.fromDate(createdAt),
     };
+    // Only include 'id' when it's a real Firestore document ID.
+    if (id.isNotEmpty) {
+      map['id'] = id;
+    }
+    return map;
   }
 
   Patient copyWith({

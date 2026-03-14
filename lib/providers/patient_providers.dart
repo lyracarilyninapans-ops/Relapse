@@ -7,10 +7,8 @@ import 'package:relapse_flutter/data/remote/user_remote_source.dart';
 import 'package:relapse_flutter/models/caregiver_profile.dart';
 import 'package:relapse_flutter/models/patient.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
-import 'package:relapse_flutter/repositories/activity_repository.dart';
-import 'package:relapse_flutter/repositories/activity_repository_impl.dart';
 
-// ─── Remote Source Providers ────────────────────────────────────────────
+// ─── Remote Source Providers (cloud-first) ──────────────────────────────
 
 final activityRemoteSourceProvider = Provider<ActivityRemoteSource>((ref) {
   return ActivityRemoteSource();
@@ -33,19 +31,7 @@ final userRemoteSourceProvider = Provider<UserRemoteSource>((ref) {
   return UserRemoteSource();
 });
 
-// ─── Repository Provider ────────────────────────────────────────────────
-
-final activityRepositoryProvider = Provider<ActivityRepository>((ref) {
-  final authUser = ref.watch(authStateProvider).valueOrNull;
-  final uid = authUser?.uid ?? '';
-  return ActivityRepositoryImpl(
-    activitySource: ref.watch(activityRemoteSourceProvider),
-    summarySource: ref.watch(dailySummaryRemoteSourceProvider),
-    uid: uid,
-  );
-});
-
-// ─── Patient Providers ──────────────────────────────────────────────────
+// ─── Patient Providers (cloud-first) ────────────────────────────────────
 
 /// Stream of all patients for the current user.
 final patientsProvider = StreamProvider<List<Patient>>((ref) {
@@ -54,24 +40,37 @@ final patientsProvider = StreamProvider<List<Patient>>((ref) {
   return ref.watch(patientRemoteSourceProvider).watchPatients(authUser.uid);
 });
 
-/// Currently selected patient ID (first patient by default).
+/// Currently selected patient ID.
+/// Prefers the patient with an active watch pairing; falls back to first.
 final selectedPatientIdProvider = StateProvider<String?>((ref) {
   final patients = ref.watch(patientsProvider).valueOrNull;
-  if (patients != null && patients.isNotEmpty) {
-    return patients.first.id;
-  }
-  return null;
+  if (patients == null || patients.isEmpty) return null;
+  // Prefer the patient that currently has a paired watch.
+  final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
+  if (paired.isNotEmpty) return paired.first.id;
+  return patients.first.id;
 });
 
 /// Currently selected patient object.
 final selectedPatientProvider = Provider<Patient?>((ref) {
   final patients = ref.watch(patientsProvider).valueOrNull;
   final selectedId = ref.watch(selectedPatientIdProvider);
-  if (patients == null || selectedId == null) return null;
+  if (patients == null || patients.isEmpty) return null;
+  if (selectedId == null) {
+    // Fallback: prefer paired patient, then first.
+    final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
+    return paired.isNotEmpty ? paired.first : patients.first;
+  }
   try {
     return patients.firstWhere((p) => p.id == selectedId);
   } catch (_) {
-    return patients.isNotEmpty ? patients.first : null;
+    // Selected ID is stale — pick the paired patient or first.
+    final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
+    final fallback = paired.isNotEmpty ? paired.first : patients.first;
+    Future.microtask(() {
+      ref.read(selectedPatientIdProvider.notifier).state = fallback.id;
+    });
+    return fallback;
   }
 });
 

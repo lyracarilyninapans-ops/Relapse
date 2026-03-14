@@ -4,8 +4,6 @@ import 'package:relapse_flutter/models/safe_zone.dart';
 import 'package:relapse_flutter/models/safe_zone_event.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
-import 'package:relapse_flutter/repositories/safe_zone_repository.dart';
-import 'package:relapse_flutter/repositories/safe_zone_repository_impl.dart';
 
 // ─── Remote Sources ──────────────────────────────────────────────────────
 
@@ -14,25 +12,16 @@ final safeZoneEventRemoteSourceProvider =
   return SafeZoneEventRemoteSource();
 });
 
-// ─── Repository ──────────────────────────────────────────────────────────
+// ─── Providers (direct cloud access) ─────────────────────────────────────
 
-final safeZoneRepositoryProvider = Provider<SafeZoneRepository>((ref) {
-  final authUser = ref.watch(authStateProvider).valueOrNull;
-  final uid = authUser?.uid ?? '';
-  return SafeZoneRepositoryImpl(
-    safeZoneSource: ref.watch(safeZoneRemoteSourceProvider),
-    eventSource: ref.watch(safeZoneEventRemoteSourceProvider),
-    uid: uid,
-  );
-});
-
-// ─── Providers ───────────────────────────────────────────────────────────
-
-/// Stream safe zones for selected patient.
+/// Stream safe zones for selected patient directly from Firestore.
 final safeZonesProvider = StreamProvider<List<SafeZone>>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return const Stream.empty();
-  return ref.watch(safeZoneRepositoryProvider).watchSafeZones(patientId);
+  if (authUser == null || patientId == null) return const Stream.empty();
+  return ref
+      .watch(safeZoneRemoteSourceProvider)
+      .watchSafeZones(authUser.uid, patientId);
 });
 
 /// The primary (first active) safe zone for the selected patient.
@@ -42,11 +31,12 @@ final primarySafeZoneProvider = Provider<SafeZone?>((ref) {
   return zones.first;
 });
 
-/// Recent safe zone events for the selected patient.
+/// Recent safe zone events for the selected patient directly from Firestore.
 final safeZoneEventsProvider = StreamProvider<List<SafeZoneEvent>>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return const Stream.empty();
+  if (authUser == null || patientId == null) return const Stream.empty();
   return ref
-      .watch(safeZoneRepositoryProvider)
-      .watchRecentEvents(patientId, limit: 20);
+      .watch(safeZoneEventRemoteSourceProvider)
+      .watchRecentEvents(authUser.uid, patientId, limit: 20);
 });

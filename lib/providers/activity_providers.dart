@@ -6,14 +6,16 @@ import 'package:relapse_flutter/models/daily_summary.dart';
 import 'package:relapse_flutter/models/safe_zone.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
-import 'package:relapse_flutter/repositories/activity_repository.dart';
+import 'package:relapse_flutter/utils/date_range.dart';
 
 // ─── Date Range Filter ──────────────────────────────────────────────────
 
-enum DateRangeFilter { today, thisWeek, thisMonth }
+enum DateRangeFilter { today, thisWeek, thisMonth, custom }
 
 final selectedDateRangeFilterProvider =
     StateProvider<DateRangeFilter>((ref) => DateRangeFilter.today);
+
+final customDateRangeProvider = StateProvider<DateRange?>((ref) => null);
 
 final selectedDateRangeProvider = Provider<DateRange>((ref) {
   final filter = ref.watch(selectedDateRangeFilterProvider);
@@ -24,6 +26,8 @@ final selectedDateRangeProvider = Provider<DateRange>((ref) {
       return DateRange.thisWeek();
     case DateRangeFilter.thisMonth:
       return DateRange.thisMonth();
+    case DateRangeFilter.custom:
+      return ref.watch(customDateRangeProvider) ?? DateRange.today();
   }
 });
 
@@ -32,10 +36,25 @@ final selectedDateRangeProvider = Provider<DateRange>((ref) {
 /// Real-time activity feed for the selected date range.
 final activityFeedProvider =
     StreamProvider<List<ActivityRecord>>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return const Stream.empty();
+  if (authUser == null || patientId == null) return const Stream.empty();
   final range = ref.watch(selectedDateRangeProvider);
-  return ref.watch(activityRepositoryProvider).watchActivityFeed(patientId, range);
+  return ref
+      .watch(activityRemoteSourceProvider)
+      .watchActivityRecords(authUser.uid, patientId, range.start, range.end);
+});
+
+/// Real-time activity feed for today only.
+/// Used as a fallback when today's daily summary doc is not available yet.
+final todayActivityFeedProvider = StreamProvider<List<ActivityRecord>>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
+  final patientId = ref.watch(selectedPatientIdProvider);
+  if (authUser == null || patientId == null) return const Stream.empty();
+  final today = DateRange.today();
+  return ref
+      .watch(activityRemoteSourceProvider)
+      .watchActivityRecords(authUser.uid, patientId, today.start, today.end);
 });
 
 // ─── Live Location ──────────────────────────────────────────────────────
@@ -43,33 +62,48 @@ final activityFeedProvider =
 /// Live location (latest GPS point from watch).
 final liveLocationProvider =
     StreamProvider<ActivityRecord?>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return const Stream.empty();
-  return ref.watch(activityRepositoryProvider).watchLiveLocation(patientId);
+  if (authUser == null || patientId == null) return const Stream.empty();
+  return ref
+      .watch(activityRemoteSourceProvider)
+      .watchLatestLocation(authUser.uid, patientId);
 });
 
 // ─── Daily Summary ──────────────────────────────────────────────────────
 
-/// Daily summary stats (distance, time outside, places).
+/// Daily summary stats (distance, time outside, places) — real-time stream.
 final dailySummaryProvider =
-    FutureProvider<DailySummary?>((ref) {
+    StreamProvider<DailySummary?>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return Future.value(null);
+  if (authUser == null || patientId == null) return const Stream.empty();
   return ref
-      .watch(activityRepositoryProvider)
-      .getDailySummary(patientId, DateTime.now());
+      .watch(dailySummaryRemoteSourceProvider)
+      .watchDailySummary(authUser.uid, patientId, DateTime.now());
 });
 
 // ─── Hourly Activity ────────────────────────────────────────────────────
 
 /// Hourly activity counts for movement chart (24 int values).
 final hourlyActivityProvider =
-    FutureProvider<List<int>>((ref) {
+    FutureProvider<List<int>>((ref) async {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return Future.value(List.filled(24, 0));
-  return ref
-      .watch(activityRepositoryProvider)
-      .getHourlyActivity(patientId, DateTime.now());
+  if (authUser == null || patientId == null) return List.filled(24, 0);
+
+  final now = DateTime.now();
+  final start = DateTime(now.year, now.month, now.day);
+  final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+  final records = await ref
+      .watch(activityRemoteSourceProvider)
+      .getActivityRecords(authUser.uid, patientId, start, end);
+
+  final hourlyCounts = List<int>.filled(24, 0);
+  for (final record in records) {
+    hourlyCounts[record.timestamp.hour]++;
+  }
+  return hourlyCounts;
 });
 
 // ─── Location History ───────────────────────────────────────────────────
@@ -77,12 +111,13 @@ final hourlyActivityProvider =
 /// Location history for timeline.
 final locationHistoryProvider =
     FutureProvider<List<ActivityRecord>>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
   final patientId = ref.watch(selectedPatientIdProvider);
-  if (patientId == null) return Future.value([]);
+  if (authUser == null || patientId == null) return Future.value([]);
   final range = ref.watch(selectedDateRangeProvider);
   return ref
-      .watch(activityRepositoryProvider)
-      .getLocationHistory(patientId, range);
+      .watch(activityRemoteSourceProvider)
+      .getLocationHistory(authUser.uid, patientId, range.start, range.end);
 });
 
 // ─── Safe Zone Status ───────────────────────────────────────────────────

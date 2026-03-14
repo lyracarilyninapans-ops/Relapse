@@ -17,9 +17,9 @@ class WatchStatus {
 
   factory WatchStatus.fromJson(Map<String, dynamic> json) {
     return WatchStatus(
-      watchId: json['watchId'] as String,
+      watchId: json['watchId'] as String? ?? '',
       isConnected: json['isConnected'] as bool? ?? false,
-      batteryLevel: json['batteryLevel'] as int?,
+      batteryLevel: (json['batteryLevel'] as num?)?.toInt(),
       lastSyncTimestamp: json['lastSyncTimestamp'] != null
           ? (json['lastSyncTimestamp'] as Timestamp).toDate()
           : null,

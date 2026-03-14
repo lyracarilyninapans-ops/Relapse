@@ -101,7 +101,7 @@ class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
         backgroundColor: AppColors.backgroundColor,
         body: const Center(child: CircularProgressIndicator()),
       ),
-      error: (_, __) => Scaffold(
+      error: (error, stackTrace) => Scaffold(
         backgroundColor: AppColors.backgroundColor,
         body: const Center(child: Text('Unable to load reminder')),
       ),
@@ -450,7 +450,7 @@ class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
       return Image.network(
         photoItem.cloudUrl!,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _photoPlaceholder(),
+        errorBuilder: (context, error, stackTrace) => _photoPlaceholder(),
       );
     }
     return _photoPlaceholder();

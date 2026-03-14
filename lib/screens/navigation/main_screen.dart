@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/models/pairing_info.dart';
+import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/notification_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/screens/home/home_screen.dart';
@@ -35,6 +39,22 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final currentIndex = ref.watch(mainTabIndexProvider);
+
+    // Listen for remote unpair (watch-initiated).
+    // When the watch unpairs, Firestore status transitions to 'unpaired'.
+    // The pairingInfoProvider stream picks this up and we redirect.
+    ref.listen(pairingInfoProvider, (prev, next) {
+      final prevInfo = prev?.valueOrNull;
+      final nextInfo = next.valueOrNull;
+      if (prevInfo != null &&
+          prevInfo.status == PairingStatus.paired &&
+          nextInfo != null &&
+          nextInfo.status == PairingStatus.unpaired) {
+        // Skip if the phone itself initiated the unpair.
+        if (ref.read(isLocallyUnpairingProvider)) return;
+        _handleRemoteUnpair();
+      }
+    });
 
     // Listen for notification taps and navigate accordingly.
     ref.listen(notificationTapProvider, (_, next) {
@@ -84,5 +104,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         onTap: (index) => ref.read(mainTabIndexProvider.notifier).state = index,
       ),
     );
+  }
+
+  /// Called when the watch initiates an unpair and we detect it via Firestore.
+  Future<void> _handleRemoteUnpair() async {
+    try {
+      final authUser = ref.read(authStateProvider).valueOrNull;
+      final patient = ref.read(selectedPatientProvider);
+      if (authUser != null && patient != null) {
+        await ref
+            .read(patientRemoteSourceProvider)
+            .deletePatient(authUser.uid, patient.id);
+      }
+    } catch (_) {
+      // Best-effort cleanup; navigation still happens.
+    }
+    if (mounted) {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        Routes.addPatient,
+        (route) => false,
+      );
+    }
   }
 }

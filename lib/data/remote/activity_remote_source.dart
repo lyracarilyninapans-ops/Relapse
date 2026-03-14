@@ -18,11 +18,12 @@ class ActivityRemoteSource {
         .collection('activityRecords');
   }
 
-  /// Real-time stream of activity records since [since].
+  /// Real-time stream of activity records since [start] and before [end].
   Stream<List<ActivityRecord>> watchActivityRecords(
-      String uid, String patientId, DateTime since) {
+      String uid, String patientId, DateTime start, DateTime end) {
     return _activityCollection(uid, patientId)
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(since))
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(end))
         .orderBy('timestamp', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs
@@ -31,16 +32,37 @@ class ActivityRemoteSource {
   }
 
   /// Stream of the latest location update record.
+  /// Uses orderBy(timestamp) on the full collection and filters client-side
+  /// to avoid requiring a Firestore composite index on (eventType, timestamp).
   Stream<ActivityRecord?> watchLatestLocation(String uid, String patientId) {
     return _activityCollection(uid, patientId)
-        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.firestoreValue)
         .orderBy('timestamp', descending: true)
-        .limit(1)
+        .limit(100)
         .snapshots()
         .map((snapshot) {
       if (snapshot.docs.isEmpty) return null;
-      final doc = snapshot.docs.first;
-      return ActivityRecord.fromJson({...doc.data(), 'id': doc.id});
+
+      // 1) Prefer most recent location_update with valid coordinates.
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final hasCoordinates = data['latitude'] != null && data['longitude'] != null;
+        if (hasCoordinates &&
+            data['eventType'] == ActivityEventType.locationUpdate.firestoreValue) {
+          return ActivityRecord.fromJson({...data, 'id': doc.id});
+        }
+      }
+
+      // 2) Fallback: most recent record with coordinates regardless of event type.
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final hasCoordinates = data['latitude'] != null && data['longitude'] != null;
+        if (hasCoordinates) {
+          return ActivityRecord.fromJson({...data, 'id': doc.id});
+        }
+      }
+
+      // 3) No coordinate-bearing record found.
+      return null;
     });
   }
 
@@ -60,18 +82,21 @@ class ActivityRemoteSource {
   }
 
   /// Fetch location-type records for a date range.
+  /// Fetches all records in the range and filters client-side to avoid
+  /// requiring a Firestore composite index on (eventType, timestamp).
   Future<List<ActivityRecord>> getLocationHistory(
       String uid, String patientId, DateTime start, DateTime end) async {
     final snapshot = await _activityCollection(uid, patientId)
-        .where('eventType', isEqualTo: ActivityEventType.locationUpdate.firestoreValue)
         .where('timestamp',
             isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(end))
         .orderBy('timestamp', descending: false)
+        .limit(50)
         .get();
 
     return snapshot.docs
         .map((doc) => ActivityRecord.fromJson({...doc.data(), 'id': doc.id}))
+        .where((record) => record.eventType == ActivityEventType.locationUpdate)
         .toList();
   }
 }

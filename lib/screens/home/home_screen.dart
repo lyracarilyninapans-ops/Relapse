@@ -54,7 +54,7 @@ class HomeScreen extends ConsumerWidget {
               width: 32,
               height: 32,
               color: Colors.white,
-              errorBuilder: (_, _, _) =>
+              errorBuilder: (context, error, stackTrace) =>
                   const Icon(Icons.favorite, size: 32, color: Colors.white),
             ),
           ),
@@ -310,33 +310,40 @@ class _PatientOverviewCard extends ConsumerWidget {
     final patient = ref.watch(selectedPatientProvider);
     final szStatus = ref.watch(safeZoneStatusProvider);
     final liveLocation = ref.watch(liveLocationProvider);
+    final watchConnected = ref.watch(watchConnectedProvider);
 
     final name = patient?.name ?? 'Unknown';
+    final photoUrl = patient?.photoUrl;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
     final initials = name.isNotEmpty
         ? name.split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase()
         : '?';
 
     final updatedText = liveLocation.when(
       data: (record) {
-        if (record == null) return 'No location data';
+        if (record == null) {
+          return watchConnected ? 'Waiting for location...' : 'No location data';
+        }
         final diff = DateTime.now().difference(record.timestamp);
         if (diff.inMinutes < 1) return 'Updated just now';
         if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
         return '${diff.inHours}h ago';
       },
       loading: () => 'Loading...',
-      error: (_, __) => 'Unavailable',
+        error: (error, stackTrace) =>
+          watchConnected ? 'Waiting for data...' : 'Unavailable',
     );
 
-    final isInside = szStatus == SafeZoneStatus.inside;
     final szLabel = switch (szStatus) {
       SafeZoneStatus.inside => 'Inside Safe Zone',
       SafeZoneStatus.outside => 'Outside Safe Zone',
-      SafeZoneStatus.unknown => 'Status Unknown',
+      SafeZoneStatus.unknown => watchConnected ? 'Locating...' : 'No Safe Zone Data',
     };
-    final szColors = isInside
-        ? [AppColors.safeZoneInsideStart, AppColors.safeZoneInsideEnd]
-        : [AppColors.safeZoneOutsideStart, AppColors.safeZoneOutsideEnd];
+    final szColors = switch (szStatus) {
+      SafeZoneStatus.inside => [AppColors.safeZoneInsideStart, AppColors.safeZoneInsideEnd],
+      SafeZoneStatus.outside => [AppColors.safeZoneOutsideStart, AppColors.safeZoneOutsideEnd],
+      SafeZoneStatus.unknown => [Colors.grey, Colors.grey.shade600],
+    };
 
     final avatarSize = (screenWidth * 0.20).clamp(64.0, 140.0);
 
@@ -363,22 +370,19 @@ class _PatientOverviewCard extends ConsumerWidget {
                 gradient: AppGradients.cardBorder,
               ),
               padding: const EdgeInsets.all(3),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppColors.primaryContainerColor,
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    initials,
-                    style: TextStyle(
-                      fontSize: avatarSize * 0.35,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primaryColor,
-                    ),
-                  ),
-                ),
-              ),
+              child: hasPhoto
+                  ? ClipOval(
+                      child: Image.network(
+                        photoUrl,
+                        width: avatarSize - 6,
+                        height: avatarSize - 6,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            _buildInitialsAvatar(
+                          initials, avatarSize, context),
+                      ),
+                    )
+                  : _buildInitialsAvatar(initials, avatarSize, context),
             ),
             const SizedBox(width: 16),
 
@@ -477,6 +481,25 @@ class _PatientOverviewCard extends ConsumerWidget {
       ),
     );
   }
+
+  Widget _buildInitialsAvatar(String initials, double avatarSize, BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.primaryContainerColor,
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          initials,
+          style: TextStyle(
+            fontSize: avatarSize * 0.35,
+            fontWeight: FontWeight.bold,
+            color: AppColors.primaryColor,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Quick Stats Row ──────────────────────────────────────────────────
@@ -491,14 +514,14 @@ class _QuickStatsRow extends ConsumerWidget {
     final activityCount = summary.when(
       data: (s) => s?.totalEvents.toString() ?? '0',
       loading: () => '...',
-      error: (_, __) => '--',
+      error: (error, stackTrace) => '--',
     );
 
     final safeZonesAsync = ref.watch(safeZoneConfigProvider);
     final safeZoneCount = safeZonesAsync.when(
       data: (zones) => zones.length.toString(),
       loading: () => '...',
-      error: (_, __) => '--',
+      error: (error, stackTrace) => '--',
     );
 
     final memoryCount = ref.watch(memoryReminderCountProvider).toString();

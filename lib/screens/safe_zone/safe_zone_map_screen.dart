@@ -5,7 +5,6 @@ import 'package:relapse_flutter/providers/activity_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/routes.dart';
-import 'package:relapse_flutter/utils/map_utils.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
@@ -19,6 +18,7 @@ class SafeZoneMapScreen extends ConsumerStatefulWidget {
 
 class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
   GoogleMapController? _mapController;
+  bool _pendingInitialFocus = true;
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
@@ -65,23 +65,39 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
     };
   }
 
-  Future<void> _recenterMap(LatLng? patientPos, LatLng? szCenter) async {
+  LatLng? _computePatientPosition() {
+    final liveRecord = ref.read(liveLocationProvider).valueOrNull;
+    if (liveRecord != null &&
+        liveRecord.latitude != null &&
+        liveRecord.longitude != null) {
+      return LatLng(liveRecord.latitude!, liveRecord.longitude!);
+    }
+    return null;
+  }
+
+  void _tryAutoFocus() {
+    if (!_pendingInitialFocus || _mapController == null) return;
+    final pos = _computePatientPosition();
+    if (pos != null) {
+      _pendingInitialFocus = false;
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
+    }
+  }
+
+  Future<void> _recenterMap() async {
     final controller = _mapController;
     if (controller == null) return;
 
-    final points = <LatLng>[];
-    if (patientPos != null) points.add(patientPos);
-    if (szCenter != null) points.add(szCenter);
-    if (points.isEmpty) return;
-
-    if (points.length == 1) {
-      await controller
-          .animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
-    } else {
-      final bounds = boundsFromPoints(points);
-      await controller
-          .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    final pos = _computePatientPosition();
+    if (pos == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No location data available yet')),
+      );
+      return;
     }
+
+    await controller.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
   }
 
   @override
@@ -126,6 +142,12 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
         ? LatLng(primaryZone.centerLat, primaryZone.centerLng)
         : null;
     final szRadius = primaryZone?.radiusMeters;
+    final hasSafeZone = szCenter != null && szRadius != null;
+    final topInset = MediaQuery.of(context).padding.top;
+
+    if (_pendingInitialFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -154,7 +176,10 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
         children: [
           GoogleMap(
             initialCameraPosition: _initialCameraPosition,
-            onMapCreated: (controller) => _mapController = controller,
+            onMapCreated: (controller) {
+              _mapController = controller;
+              _tryAutoFocus();
+            },
             markers: _buildMarkers(isInside, patientPos, szCenter),
             circles: _buildCircles(szCenter, szRadius),
             compassEnabled: true,
@@ -169,7 +194,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
 
           // Status banner
           Positioned(
-            top: 16,
+            top: topInset + 8,
             left: 16,
             right: 16,
             child: Material(
@@ -178,34 +203,46 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: isInside ? Colors.green.shade50 : Colors.red.shade50,
+                  color: hasSafeZone
+                      ? (isInside ? Colors.green.shade50 : Colors.red.shade50)
+                      : Colors.orange.shade50,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isInside
-                        ? AppColors.primaryColor
-                        : AppColors.errorColor,
+                    color: hasSafeZone
+                        ? (isInside
+                            ? AppColors.primaryColor
+                            : AppColors.errorColor)
+                        : Colors.orange,
                     width: 2,
                   ),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      isInside ? Icons.check_circle : Icons.warning,
-                      color: isInside
-                          ? AppColors.primaryColor
-                          : AppColors.errorColor,
+                      hasSafeZone
+                          ? (isInside ? Icons.check_circle : Icons.warning)
+                          : Icons.info_outline,
+                      color: hasSafeZone
+                          ? (isInside
+                              ? AppColors.primaryColor
+                              : AppColors.errorColor)
+                          : Colors.orange,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        isInside
-                            ? '$patientName is inside the safe zone'
-                            : '$patientName is OUTSIDE the safe zone',
+                        hasSafeZone
+                            ? (isInside
+                                ? '$patientName is inside the safe zone'
+                                : '$patientName is OUTSIDE the safe zone')
+                            : 'Safe zone is not configured yet',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: isInside
-                              ? AppColors.primaryColor
-                              : AppColors.errorColor,
+                          color: hasSafeZone
+                              ? (isInside
+                                  ? AppColors.primaryColor
+                                  : AppColors.errorColor)
+                              : Colors.orange,
                         ),
                       ),
                     ),
@@ -281,7 +318,11 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          isInside ? 'Inside safe zone' : 'Outside safe zone',
+                          hasSafeZone
+                            ? (isInside
+                              ? 'Inside safe zone'
+                              : 'Outside safe zone')
+                            : 'Safe zone not initialized',
                           style: const TextStyle(
                               fontSize: 14, color: Colors.black54),
                         ),
@@ -304,11 +345,11 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
           // Recenter FAB
           Positioned(
             right: 16,
-            top: 16,
+            top: topInset + 86,
             child: FloatingActionButton.small(
               heroTag: 'safe_zone_recenter_fab',
               backgroundColor: AppColors.surfaceColor,
-              onPressed: () => _recenterMap(patientPos, szCenter),
+              onPressed: _recenterMap,
               child: const Icon(
                 Icons.center_focus_strong,
                 color: AppColors.primaryColor,

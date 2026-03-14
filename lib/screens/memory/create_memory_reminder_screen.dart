@@ -16,6 +16,7 @@ import 'package:relapse_flutter/providers/memory_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
+import 'package:relapse_flutter/utils/geocoding_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Create Memory Reminder screen with step indicator, map selection, radius,
@@ -41,6 +42,8 @@ class _CreateMemoryReminderScreenState
   final FocusNode _searchFocusNode = FocusNode();
 
   GoogleMapController? _mapController;
+  bool _pendingInitialFocus = true;
+  bool _isSearchingLocation = false;
 
   LatLng? _selectedLocation;
   double _radius = 50;
@@ -51,6 +54,15 @@ class _CreateMemoryReminderScreenState
   bool _hasAudio = false;
   bool _hasVideo = false;
   bool _isSaving = false;
+
+  bool get _hasAnyMedia => _hasPhoto || _hasAudio || _hasVideo;
+
+  bool get _isMediaSelectionValid {
+    if (_hasVideo) {
+      return !_hasPhoto && !_hasAudio;
+    }
+    return _hasPhoto || _hasAudio;
+  }
 
   // Actual file references for upload
   File? _photoFile;
@@ -69,16 +81,14 @@ class _CreateMemoryReminderScreenState
 
   double _uploadProgress = 0;
 
-  bool get _isTextInputFocused =>
-      _nameFocusNode.hasFocus || _searchFocusNode.hasFocus;
-
   int get _currentStep {
-    if (!_hasName) return 0;
-    if (_selectedLocation == null) return 1;
+    if (_selectedLocation == null) return 0;
+    if (!_hasName) return 1;
     return 2;
   }
 
-  bool get _canSave => _hasName && _selectedLocation != null && _hasPhoto;
+  bool get _canSave =>
+      _hasName && _selectedLocation != null && _hasAnyMedia && _isMediaSelectionValid;
 
   Set<Marker> _buildMarkers(LatLng? patientPos) {
     final markers = <Marker>{};
@@ -91,6 +101,7 @@ class _CreateMemoryReminderScreenState
         position: patientPos,
         infoWindow: InfoWindow(title: patientName),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        alpha: 0,
       ));
     }
 
@@ -124,8 +135,6 @@ class _CreateMemoryReminderScreenState
     super.initState();
     _nameController.addListener(_onNameChanged);
     _searchController.addListener(_onSearchChanged);
-    _nameFocusNode.addListener(_onFocusChanged);
-    _searchFocusNode.addListener(_onFocusChanged);
   }
 
   @override
@@ -181,8 +190,6 @@ class _CreateMemoryReminderScreenState
     _mapController?.dispose();
     _nameController.removeListener(_onNameChanged);
     _searchController.removeListener(_onSearchChanged);
-    _nameFocusNode.removeListener(_onFocusChanged);
-    _searchFocusNode.removeListener(_onFocusChanged);
     _nameFocusNode.dispose();
     _searchFocusNode.dispose();
     _nameController.dispose();
@@ -202,17 +209,66 @@ class _CreateMemoryReminderScreenState
     setState(() => _hasSearchText = hasSearchText);
   }
 
-  void _onFocusChanged() {
-    if (!mounted) return;
-    setState(() {});
+  /// Latest patient position from live location stream.
+  LatLng? _computePatientPosition() {
+    final liveRecord = ref.read(liveLocationProvider).valueOrNull;
+    if (liveRecord != null &&
+        liveRecord.latitude != null &&
+        liveRecord.longitude != null) {
+      return LatLng(liveRecord.latitude!, liveRecord.longitude!);
+    }
+    return null;
   }
 
-  Future<void> _centerOnPatient(LatLng? patientPos) async {
-    if (_mapController == null) return;
-    if (patientPos != null) {
-      await _mapController!
-          .animateCamera(CameraUpdate.newLatLngZoom(patientPos, 15));
+  void _tryAutoFocus() {
+    if (!_pendingInitialFocus || _mapController == null) return;
+    final pos = _computePatientPosition();
+    debugPrint('[CreateMemoryReminder] _tryAutoFocus: pos=$pos');
+    if (pos != null) {
+      _pendingInitialFocus = false;
+      _mapController!.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
     }
+  }
+
+  Future<void> _searchLocation() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    setState(() => _isSearchingLocation = true);
+    try {
+      final latLng = await GeocodingUtils.geocodeAddress(query);
+      if (latLng != null && mounted) {
+        setState(() => _selectedLocation = latLng);
+        _mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(latLng, 16),
+        );
+        _searchFocusNode.unfocus();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No results found')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Search failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSearchingLocation = false);
+    }
+  }
+
+  String get _saveButtonText {
+    if (_isSaving) return 'Saving...';
+    if (_canSave) return 'Save Memory';
+    if (_selectedLocation == null) return 'Select a location to save';
+    if (!_hasName) return 'Enter a name to save';
+    if (!_hasAnyMedia) return 'Add media to save';
+    if (!_isMediaSelectionValid) {
+      return 'Use Photo, Audio, Photo+Audio, or Video only';
+    }
+    return 'Complete all fields to save';
   }
 
   void _toggleMedia(String type) {
@@ -225,6 +281,13 @@ class _CreateMemoryReminderScreenState
             _existingPhotoUrl = null;
           });
         } else {
+          if (_hasVideo) {
+            setState(() {
+              _hasVideo = false;
+              _videoFile = null;
+              _existingVideoUrl = null;
+            });
+          }
           _pickPhoto();
         }
         break;
@@ -236,6 +299,13 @@ class _CreateMemoryReminderScreenState
             _existingAudioUrl = null;
           });
         } else {
+          if (_hasVideo) {
+            setState(() {
+              _hasVideo = false;
+              _videoFile = null;
+              _existingVideoUrl = null;
+            });
+          }
           _pickAudio();
         }
         break;
@@ -247,24 +317,44 @@ class _CreateMemoryReminderScreenState
             _existingVideoUrl = null;
           });
         } else {
+          if (_hasPhoto || _hasAudio) {
+            setState(() {
+              _hasPhoto = false;
+              _photoFile = null;
+              _existingPhotoUrl = null;
+              _hasAudio = false;
+              _audioFile = null;
+              _existingAudioUrl = null;
+            });
+          }
           _pickVideo();
         }
         break;
     }
   }
 
+
+
   Future<void> _pickPhoto() async {
     final source = await _showMediaSourceDialog('Photo');
     if (source == null) return;
 
     final uploadService = ref.read(mediaUploadServiceProvider);
-    final file = await uploadService.pickPhoto(source: source);
-    if (file != null && mounted) {
-      setState(() {
-        _photoFile = file;
-        _hasPhoto = true;
-        _existingPhotoUrl = null;
-      });
+    try {
+      final file = await uploadService.pickPhoto(source: source);
+      if (file != null && mounted) {
+        setState(() {
+          _photoFile = file;
+          _hasPhoto = true;
+          _existingPhotoUrl = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        );
+      }
     }
   }
 
@@ -273,27 +363,47 @@ class _CreateMemoryReminderScreenState
     if (source == null) return;
 
     final uploadService = ref.read(mediaUploadServiceProvider);
-    final file = await uploadService.pickVideo(source: source);
-    if (file != null && mounted) {
-      setState(() {
-        _videoFile = file;
-        _hasVideo = true;
-        _existingVideoUrl = null;
-      });
+    try {
+      final file = await uploadService.pickVideo(source: source);
+      if (file != null && mounted) {
+        setState(() {
+          _videoFile = file;
+          _hasVideo = true;
+          _existingVideoUrl = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        );
+      }
     }
   }
 
   Future<void> _pickAudio() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
-      allowMultiple: false,
-    );
-    if (result != null && result.files.single.path != null && mounted) {
-      setState(() {
-        _audioFile = File(result.files.single.path!);
-        _hasAudio = true;
-        _existingAudioUrl = null;
-      });
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+      );
+      if (result != null && result.files.single.path != null && mounted) {
+        final file = File(result.files.single.path!);
+        if (file.lengthSync() > 20 * 1024 * 1024) {
+          throw Exception('Audio file exceeds the 20MB limit.');
+        }
+        setState(() {
+          _audioFile = file;
+          _hasAudio = true;
+          _existingAudioUrl = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        );
+      }
     }
   }
 
@@ -463,8 +573,6 @@ class _CreateMemoryReminderScreenState
 
   @override
   Widget build(BuildContext context) {
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final pauseMapForTyping = keyboardVisible || _isTextInputFocused;
     final mapHeight = (MediaQuery.of(context).size.height * 0.4).clamp(
       250.0,
       500.0,
@@ -472,14 +580,20 @@ class _CreateMemoryReminderScreenState
 
     final liveLocation = ref.watch(liveLocationProvider);
     final patientPos = liveLocation.whenOrNull(
-      data: (record) => record != null && record.latitude != null
+      data: (record) => record != null &&
+          record.latitude != null &&
+          record.longitude != null
           ? LatLng(record.latitude!, record.longitude!)
           : null,
     );
 
+    // Auto-focus: schedule after each build until successful
+    if (_pendingInitialFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
+
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
-      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: AppColors.backgroundColor,
         elevation: 0,
@@ -500,15 +614,13 @@ class _CreateMemoryReminderScreenState
                 const SizedBox(height: 8),
                 _buildStepIndicator(),
                 const SizedBox(height: 16),
-                _buildNameField(),
-                const SizedBox(height: 16),
                 _buildLocationHeader(),
                 const SizedBox(height: 12),
-                _buildSearchField(),
-                const SizedBox(height: 12),
-                _buildMapContainer(mapHeight, pauseMapForTyping, patientPos),
+                _buildMapContainer(mapHeight, patientPos),
                 const SizedBox(height: 12),
                 _buildSelectedLocationCard(),
+                const SizedBox(height: 16),
+                _buildNameField(),
                 const SizedBox(height: 24),
                 _buildRadiusSelector(),
                 const SizedBox(height: 24),
@@ -519,11 +631,7 @@ class _CreateMemoryReminderScreenState
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: GradientButtonWithIcon(
-                    text: _isSaving
-                        ? 'Saving...'
-                        : _canSave
-                            ? 'Save Memory'
-                            : 'Photo required to save',
+                    text: _saveButtonText,
                     icon: Icons.save,
                     onPressed:
                         _canSave && !_isSaving ? _saveMemory : null,
@@ -592,9 +700,9 @@ class _CreateMemoryReminderScreenState
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _stepItem(0, Icons.label, 'Name'),
+          _stepItem(0, Icons.location_on, 'Location'),
           _stepArrow(),
-          _stepItem(1, Icons.location_on, 'Location'),
+          _stepItem(1, Icons.label, 'Name'),
           _stepArrow(),
           _stepItem(2, Icons.perm_media, 'Media'),
         ],
@@ -686,32 +794,8 @@ class _CreateMemoryReminderScreenState
     );
   }
 
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: TextField(
-        controller: _searchController,
-        focusNode: _searchFocusNode,
-        textInputAction: TextInputAction.done,
-        decoration: InputDecoration(
-          hintText: 'Search address or place...',
-          filled: true,
-          fillColor: AppColors.surfaceColor,
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: _hasSearchText
-              ? IconButton(
-                  onPressed: _searchController.clear,
-                  icon: const Icon(Icons.clear),
-                )
-              : null,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
-    );
-  }
-
   Widget _buildMapContainer(
-      double mapHeight, bool pauseMapForTyping, LatLng? patientPos) {
+      double mapHeight, LatLng? patientPos) {
     return Container(
       height: mapHeight,
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -731,62 +815,101 @@ class _CreateMemoryReminderScreenState
         borderRadius: BorderRadius.circular(12),
         child: Stack(
           children: [
-            if (pauseMapForTyping)
-              Container(
-                color: AppColors.surfaceColor,
-                alignment: Alignment.center,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.keyboard,
-                      color: AppColors.primaryColor,
-                      size: 28,
+            RepaintBoundary(
+              child: GoogleMap(
+                initialCameraPosition: _initialCameraPosition,
+                onMapCreated: (controller) {
+                  _mapController = controller;
+                  _tryAutoFocus();
+                },
+                onTap: (latLng) =>
+                    setState(() => _selectedLocation = latLng),
+                gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(
+                    () => EagerGestureRecognizer(),
+                  ),
+                },
+                markers: _buildMarkers(patientPos),
+                circles: _circles,
+                compassEnabled: true,
+                zoomControlsEnabled: true,
+                scrollGesturesEnabled: true,
+                zoomGesturesEnabled: true,
+                rotateGesturesEnabled: true,
+                tiltGesturesEnabled: true,
+                myLocationButtonEnabled: false,
+                mapToolbarEnabled: false,
+              ),
+            ),
+            // Search field inside the map
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 56,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(12),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _searchLocation(),
+                  decoration: InputDecoration(
+                    hintText: 'Search address or place...',
+                    filled: true,
+                    fillColor: AppColors.surfaceColor,
+                    prefixIcon: _isSearchingLocation
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primaryColor,
+                              ),
+                            ),
+                          )
+                        : const Icon(Icons.search, size: 20),
+                    suffixIcon: _hasSearchText
+                        ? IconButton(
+                            onPressed: () {
+                              _searchController.clear();
+                              _searchFocusNode.unfocus();
+                            },
+                            icon: const Icon(Icons.clear, size: 20),
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Map paused while typing',
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              RepaintBoundary(
-                child: GoogleMap(
-                  initialCameraPosition: _initialCameraPosition,
-                  onMapCreated: (controller) => _mapController = controller,
-                  onTap: (latLng) =>
-                      setState(() => _selectedLocation = latLng),
-                  gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => EagerGestureRecognizer(),
-                    ),
-                  },
-                  markers: _buildMarkers(patientPos),
-                  circles: _circles,
-                  compassEnabled: true,
-                  zoomControlsEnabled: true,
-                  scrollGesturesEnabled: true,
-                  zoomGesturesEnabled: true,
-                  rotateGesturesEnabled: true,
-                  tiltGesturesEnabled: true,
-                  myLocationButtonEnabled: false,
-                  mapToolbarEnabled: false,
+                    isDense: true,
+                  ),
+                  style: const TextStyle(fontSize: 14),
                 ),
               ),
+            ),
             Positioned(
               right: 12,
               top: 12,
               child: FloatingActionButton.small(
                 heroTag: 'create_memory_center_fab',
                 backgroundColor: AppColors.surfaceColor,
-                onPressed: pauseMapForTyping
-                    ? null
-                    : () => _centerOnPatient(patientPos),
+                onPressed: () {
+                  final pos = _computePatientPosition();
+                  if (pos != null) {
+                    _mapController?.animateCamera(
+                        CameraUpdate.newLatLngZoom(pos, 15));
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('No location data available yet')),
+                    );
+                  }
+                },
                 child: const Icon(
                   Icons.center_focus_strong,
                   color: AppColors.primaryColor,
@@ -926,6 +1049,10 @@ class _CreateMemoryReminderScreenState
   }
 
   Widget _buildMediaSection() {
+    final isPhotoDisabled = _hasVideo && !_hasPhoto;
+    final isAudioDisabled = _hasVideo && !_hasAudio;
+    final isVideoDisabled = (_hasPhoto || _hasAudio) && !_hasVideo;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -949,27 +1076,55 @@ class _CreateMemoryReminderScreenState
             ],
           ),
           const SizedBox(height: 12),
+          Text(
+            'Required: choose exactly one of these combinations — Photo only, Audio only, Photo + Audio, or Video only.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[500],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Video cannot be combined with Photo or Audio.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[500],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Constraints: Max 20MB per file. Videos max 2 minutes.',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 12),
           _mediaCard(
             icon: Icons.photo_camera,
             title: 'Photo',
-            subtitle: 'Required',
+            subtitle: 'Use alone or with Audio',
             hasMedia: _hasPhoto,
+            isDisabled: isPhotoDisabled,
             onTap: () => _toggleMedia('photo'),
           ),
           const SizedBox(height: 8),
           _mediaCard(
             icon: Icons.mic,
             title: 'Audio',
-            subtitle: 'Optional',
+            subtitle: 'Use alone or with Photo',
             hasMedia: _hasAudio,
+            isDisabled: isAudioDisabled,
             onTap: () => _toggleMedia('audio'),
           ),
           const SizedBox(height: 8),
           _mediaCard(
             icon: Icons.videocam,
             title: 'Video',
-            subtitle: 'Optional',
+            subtitle: 'Use alone only',
             hasMedia: _hasVideo,
+            isDisabled: isVideoDisabled,
             onTap: () => _toggleMedia('video'),
           ),
         ],
@@ -982,8 +1137,13 @@ class _CreateMemoryReminderScreenState
     required String title,
     required String subtitle,
     required bool hasMedia,
+    required bool isDisabled,
     required VoidCallback onTap,
   }) {
+    final titleColor = isDisabled ? Colors.grey[500] : AppColors.onSurfaceColor;
+    final subtitleColor = isDisabled ? Colors.grey[400] : Colors.grey[500];
+    final iconColor = isDisabled ? Colors.grey[400] : AppColors.primaryColor;
+
     return Card(
       elevation: 2,
       color: AppColors.surfaceColor,
@@ -995,12 +1155,12 @@ class _CreateMemoryReminderScreenState
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
+        onTap: isDisabled ? null : onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Icon(icon, size: 28, color: AppColors.primaryColor),
+              Icon(icon, size: 28, color: iconColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1008,19 +1168,23 @@ class _CreateMemoryReminderScreenState
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: titleColor,
+                      ),
                     ),
                     Text(
                       subtitle,
-                      style:
-                          TextStyle(fontSize: 12, color: Colors.grey[500]),
+                      style: TextStyle(fontSize: 12, color: subtitleColor),
                     ),
                   ],
                 ),
               ),
               Icon(
                 hasMedia ? Icons.check_circle : Icons.add_circle_outline,
-                color: hasMedia ? Colors.green : AppColors.primaryColor,
+                color: hasMedia
+                    ? Colors.green
+                    : (isDisabled ? Colors.grey[400] : AppColors.primaryColor),
                 size: 28,
               ),
             ],

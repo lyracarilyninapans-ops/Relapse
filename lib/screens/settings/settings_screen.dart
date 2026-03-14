@@ -80,10 +80,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           .toList(),
                       onChanged: (val) {
                         if (val == null) return;
-                        ref.read(reminderCooldownProvider.notifier).state = val;
+                        final uid = ref.read(authStateProvider).valueOrNull?.uid;
+                        if (uid == null) return;
                         ref
                             .read(settingsServiceProvider)
-                            .setReminderCooldownMinutes(val);
+                            .setReminderCooldownMinutes(uid, val);
+                        _syncReminderCooldownToPatient(val);
                       },
                     ),
                   ),
@@ -104,12 +106,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   subtitle:
                       const Text('Play sound for alerts and reminders'),
                   value: soundEnabled,
-                  activeColor: AppColors.primaryColor,
+                  activeThumbColor: AppColors.primaryColor,
                   onChanged: (val) {
-                    ref.read(notificationSoundProvider.notifier).state = val;
+                    final uid = ref.read(authStateProvider).valueOrNull?.uid;
+                    if (uid == null) return;
                     ref
                         .read(settingsServiceProvider)
-                        .setNotificationSoundEnabled(val);
+                        .setNotificationSoundEnabled(uid, val);
                   },
                 ),
               ),
@@ -135,11 +138,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       initialTime: dailyReportTime,
                     );
                     if (picked != null) {
-                      ref.read(dailyReportTimeProvider.notifier).state =
-                          picked;
+                      final uid = ref.read(authStateProvider).valueOrNull?.uid;
+                      if (uid == null) return;
                       ref
                           .read(settingsServiceProvider)
-                          .setDailyReportTime(picked.hour, picked.minute);
+                          .setDailyReportTime(uid, picked.hour, picked.minute);
                     }
                   },
                 ),
@@ -154,14 +157,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: AppColors.surfaceColor,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Column(
-                  children: [
-                    _themeOption('System Default', 'system', themeMode),
-                    const Divider(height: 1),
-                    _themeOption('Light', 'light', themeMode),
-                    const Divider(height: 1),
-                    _themeOption('Dark', 'dark', themeMode),
-                  ],
+                child: RadioGroup<String>(
+                  groupValue: themeMode,
+                  onChanged: (val) {
+                    if (val == null) return;
+                    final uid = ref.read(authStateProvider).valueOrNull?.uid;
+                    if (uid == null) return;
+                    ref.read(settingsServiceProvider).setThemeMode(uid, val);
+                  },
+                  child: Column(
+                    children: [
+                      _themeOption('System Default', 'system'),
+                      const Divider(height: 1),
+                      _themeOption('Light', 'light'),
+                      const Divider(height: 1),
+                      _themeOption('Dark', 'dark'),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 32),
@@ -219,17 +231,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _themeOption(String label, String value, String currentValue) {
+  Widget _themeOption(String label, String value) {
     return RadioListTile<String>(
       title: Text(label),
       value: value,
-      groupValue: currentValue,
-      activeColor: AppColors.primaryColor,
-      onChanged: (val) {
-        if (val == null) return;
-        ref.read(themeModeProvider.notifier).state = val;
-        ref.read(settingsServiceProvider).setThemeMode(val);
-      },
     );
   }
 
@@ -298,10 +303,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final patient = ref.read(selectedPatientProvider);
       if (authUser == null || patient == null) return;
 
-      // Clear pairing in Firestore directly (copyWith can't set null)
+      // Signal that the unpair is local so MainScreen's listener doesn't
+      // also try to navigate.
+      ref.read(isLocallyUnpairingProvider.notifier).state = true;
+
+      // Delete the old patient record entirely so it doesn't linger
+      // and get picked up as 'selected' after re-pairing.
       await ref
           .read(patientRemoteSourceProvider)
-          .clearPairedWatch(authUser.uid, patient.id);
+          .deletePatient(authUser.uid, patient.id);
 
       // Unpair the watch via Firestore
       await ref.read(watchServiceProvider).unpairWatch(authUser.uid);
@@ -315,6 +325,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Routes.addPatient,
           (route) => false,
         );
+        // Reset the flag now that navigation is complete so the remote
+        // unpair listener works again after the next pairing.
+        ref.read(isLocallyUnpairingProvider.notifier).state = false;
       }
     } catch (e) {
       if (mounted) {
@@ -323,6 +336,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           SnackBar(content: Text('Failed to unpair: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _syncReminderCooldownToPatient(int minutes) async {
+    try {
+      final authUser = ref.read(authStateProvider).valueOrNull;
+      final patient = ref.read(selectedPatientProvider);
+      if (authUser == null || patient == null) return;
+
+      await ref
+          .read(patientRemoteSourceProvider)
+          .setReminderCooldownMinutes(authUser.uid, patient.id, minutes);
+    } catch (_) {
+      // Keep settings UX responsive even if remote sync fails.
     }
   }
 }

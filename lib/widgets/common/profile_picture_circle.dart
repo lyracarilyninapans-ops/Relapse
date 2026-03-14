@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_gradients.dart';
@@ -5,11 +7,13 @@ import '../../theme/app_gradients.dart';
 /// Profile picture circle with camera button overlay (120×120).
 class ProfilePictureCircle extends StatelessWidget {
   final String? imageUrl;
+  final File? localImageFile;
   final VoidCallback? onCameraTap;
 
   const ProfilePictureCircle({
     super.key,
     this.imageUrl,
+    this.localImageFile,
     this.onCameraTap,
   });
 
@@ -30,15 +34,23 @@ class ProfilePictureCircle extends StatelessWidget {
               ),
             ),
             child: ClipOval(
-              child: imageUrl != null
-                  ? Image.network(
-                      imageUrl!,
+              child: localImageFile != null
+                  ? Image.file(
+                      localImageFile!,
                       fit: BoxFit.cover,
                       width: 120,
                       height: 120,
                       errorBuilder: (_, _, _) => _placeholder(),
                     )
-                  : _placeholder(),
+                  : imageUrl != null
+                      ? Image.network(
+                          imageUrl!,
+                          fit: BoxFit.cover,
+                          width: 120,
+                          height: 120,
+                          errorBuilder: (_, _, _) => _placeholder(),
+                        )
+                      : _placeholder(),
             ),
           ),
           Positioned(

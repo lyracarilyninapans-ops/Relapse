@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum ActivityEventType {
@@ -73,8 +75,35 @@ class ActivityRecord {
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
       eventType: ActivityEventType.fromFirestore(json['eventType'] as String),
-      metadata: json['metadata'] as Map<String, dynamic>?,
+      metadata: _parseMetadata(json['metadata']),
     );
+  }
+
+  static Map<String, dynamic>? _parseMetadata(dynamic value) {
+    if (value == null) return null;
+
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+
+    if (value is Map) {
+      return value.map((key, value) => MapEntry(key.toString(), value));
+    }
+
+    if (value is String) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) {
+          return decoded
+              .map((key, value) => MapEntry(key.toString(), value));
+        }
+      } catch (_) {
+        return {'description': value};
+      }
+    }
+
+    return null;
   }
 
   Map<String, dynamic> toJson() {

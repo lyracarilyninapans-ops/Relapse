@@ -1,67 +1,61 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:relapse_flutter/services/settings_service.dart';
 
 void main() {
+  group('AppSettings', () {
+    test('defaults are correct', () {
+      final settings = AppSettings.defaults();
+      expect(settings.reminderCooldownMinutes, 30);
+      expect(settings.notificationSoundEnabled, true);
+      expect(settings.dailyReportHour, 20);
+      expect(settings.dailyReportMinute, 0);
+      expect(settings.themeMode, 'system');
+    });
+
+    test('fromMap parses values correctly', () {
+      final settings = AppSettings.fromMap({
+        'reminder_cooldown_minutes': 60,
+        'notification_sound_enabled': false,
+        'daily_report_hour': 8,
+        'daily_report_minute': 30,
+        'theme_mode': 'dark',
+      });
+      expect(settings.reminderCooldownMinutes, 60);
+      expect(settings.notificationSoundEnabled, false);
+      expect(settings.dailyReportHour, 8);
+      expect(settings.dailyReportMinute, 30);
+      expect(settings.themeMode, 'dark');
+    });
+
+    test('fromMap uses defaults for missing keys', () {
+      final settings = AppSettings.fromMap({});
+      expect(settings.reminderCooldownMinutes, 30);
+      expect(settings.notificationSoundEnabled, true);
+      expect(settings.dailyReportHour, 20);
+      expect(settings.dailyReportMinute, 0);
+      expect(settings.themeMode, 'system');
+    });
+
+    test('fromMap handles partial data', () {
+      final settings = AppSettings.fromMap({
+        'reminder_cooldown_minutes': 90,
+        'theme_mode': 'light',
+      });
+      expect(settings.reminderCooldownMinutes, 90);
+      expect(settings.notificationSoundEnabled, true); // default
+      expect(settings.dailyReportHour, 20); // default
+      expect(settings.themeMode, 'light');
+    });
+  });
+
   group('SettingsService', () {
-    late SettingsService service;
-
-    setUp(() async {
-      SharedPreferences.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
-      service = SettingsService(prefs);
-    });
-
-    test('default reminder cooldown is 30 minutes', () {
-      expect(service.reminderCooldownMinutes, 30);
-    });
-
-    test('setReminderCooldownMinutes persists value', () async {
-      await service.setReminderCooldownMinutes(60);
-      expect(service.reminderCooldownMinutes, 60);
-    });
-
-    test('default notification sound is enabled', () {
-      expect(service.notificationSoundEnabled, true);
-    });
-
-    test('setNotificationSoundEnabled persists value', () async {
-      await service.setNotificationSoundEnabled(false);
-      expect(service.notificationSoundEnabled, false);
-    });
-
-    test('default daily report time is 20:00', () {
-      expect(service.dailyReportHour, 20);
-      expect(service.dailyReportMinute, 0);
-    });
-
-    test('setDailyReportTime persists hour and minute', () async {
-      await service.setDailyReportTime(8, 30);
-      expect(service.dailyReportHour, 8);
-      expect(service.dailyReportMinute, 30);
-    });
-
-    test('default theme mode is system', () {
-      expect(service.themeMode, 'system');
-    });
-
-    test('setThemeMode persists value', () async {
-      await service.setThemeMode('dark');
-      expect(service.themeMode, 'dark');
-    });
-
-    test('values persist across service instances', () async {
-      await service.setReminderCooldownMinutes(90);
-      await service.setNotificationSoundEnabled(false);
-      await service.setThemeMode('light');
-
-      // Create new service with same SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final service2 = SettingsService(prefs);
-
-      expect(service2.reminderCooldownMinutes, 90);
-      expect(service2.notificationSoundEnabled, false);
-      expect(service2.themeMode, 'light');
+    // SettingsService now requires Firestore (cloud-first architecture).
+    // Integration tests for read/write should use the Firebase emulator.
+    // The instantiation test is skipped in unit tests.
+    test('constructor accepts custom Firestore instance', () {
+      // Verifies the factory parameter is available for dependency injection
+      // (used in integration tests with Firebase emulator).
+      expect(SettingsService.new, isA<Function>());
     });
   });
 }

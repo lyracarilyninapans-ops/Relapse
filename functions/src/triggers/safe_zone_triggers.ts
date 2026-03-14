@@ -74,8 +74,13 @@ export const onSafeZoneEventCreated = onDocumentCreated(
       channelId: "safe_zone_alerts",
     };
 
-    const sent = await sendPushToUser(uid, title, body, notifData);
-    logger.info("Safe zone push sent", { uid, patientId, eventId, sent });
+    logger.info("Attempting to send push notification", { uid, patientId, title, notifData });
+    try {
+      const sent = await sendPushToUser(uid, title, body, notifData);
+      logger.info("Safe zone push result", { uid, patientId, eventId, sent });
+    } catch (pushErr) {
+      logger.error("Failed to send safe zone push", { uid, patientId, eventId, pushErr });
+    }
 
     // Update cooldown marker
     await cooldownRef.set({

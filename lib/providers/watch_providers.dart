@@ -48,10 +48,22 @@ final watchStatusProvider = StreamProvider<WatchStatus?>((ref) {
       .watchStatus(authUser.uid, patientId);
 });
 
+/// Flag set by the phone's settings screen before it calls unpairWatch()
+/// so the MainScreen listener can distinguish local unpairs from remote ones.
+final isLocallyUnpairingProvider = StateProvider<bool>((ref) => false);
+
 /// Whether the watch is currently connected.
+/// Considers the watch offline if isConnected is false or if it hasn't
+/// sent a heartbeat in the last 10 minutes.
 final watchConnectedProvider = Provider<bool>((ref) {
   final status = ref.watch(watchStatusProvider).valueOrNull;
-  return status?.isConnected ?? false;
+  if (status == null || !status.isConnected) return false;
+  // If lastSyncTimestamp is available, check staleness
+  if (status.lastSyncTimestamp != null) {
+    final age = DateTime.now().difference(status.lastSyncTimestamp!);
+    if (age.inMinutes > 10) return false;
+  }
+  return true;
 });
 
 /// Watch battery level (null if unknown).
