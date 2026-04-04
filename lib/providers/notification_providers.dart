@@ -5,7 +5,7 @@ import 'package:relapse_flutter/services/notification_service.dart';
 
 /// Singleton NotificationService instance.
 final notificationServiceProvider = Provider<NotificationService>((ref) {
-  return FirebaseNotificationService();
+  return appNotificationService;
 });
 
 /// Stream of notification taps for navigation.

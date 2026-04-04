@@ -2,7 +2,9 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
+import { ActivityRecord } from "../types";
 import { toDateString } from "../utils/dates";
+import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
 
 /**
  * Callable: manualSummaryRebuild
@@ -36,6 +38,26 @@ export const manualSummaryRebuild = onCall(
       .orderBy("timestamp")
       .get();
 
+    const boundarySnap = await admin.firestore()
+      .collection(paths.activityRecords(uid, patientId))
+      .where("timestamp", "<", admin.firestore.Timestamp.fromDate(startOfDay))
+      .orderBy("timestamp", "desc")
+      .limit(20)
+      .get();
+
+    const initiallyOutside = inferInitiallyOutside(
+      boundarySnap.docs.map((doc) => doc.data() as ActivityRecord),
+    );
+    const activeMinutes = calculateActiveMinutes(
+      recordsSnap.docs.map((doc) => doc.data() as ActivityRecord),
+      {
+        dayStart: startOfDay,
+        dayEnd: endOfDay,
+        openIntervalEnd: endOfDay,
+        initiallyOutside,
+      },
+    );
+
     let totalEvents = 0;
     let safeZoneExits = 0;
     let remindersTriggered = 0;
@@ -55,12 +77,13 @@ export const manualSummaryRebuild = onCall(
       totalEvents,
       safeZoneExits,
       remindersTriggered,
+      activeMinutes,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       rebuiltAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
     logger.info("Summary rebuilt", { uid, patientId, targetDate, totalEvents });
 
-    return { success: true, totalEvents, safeZoneExits, remindersTriggered };
+    return { success: true, totalEvents, safeZoneExits, remindersTriggered, activeMinutes };
   },
 );

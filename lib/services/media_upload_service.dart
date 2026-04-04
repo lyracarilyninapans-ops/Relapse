@@ -28,8 +28,8 @@ class MediaUploadService {
       if (picked == null) return null;
       
       final file = File(picked.path);
-      if (file.lengthSync() > 20 * 1024 * 1024) {
-        throw Exception('Photo exceeds the 20MB size limit.');
+      if (file.lengthSync() > 50 * 1024 * 1024) {
+        throw Exception('Photo exceeds the 50MB size limit.');
       }
       return file;
     } catch (e) {
@@ -47,8 +47,8 @@ class MediaUploadService {
       if (picked == null) return null;
       
       final file = File(picked.path);
-      if (file.lengthSync() > 20 * 1024 * 1024) {
-        throw Exception('Video exceeds the 20MB size limit.');
+      if (file.lengthSync() > 50 * 1024 * 1024) {
+        throw Exception('Video exceeds the 50MB size limit.');
       }
       return file;
     } catch (e) {

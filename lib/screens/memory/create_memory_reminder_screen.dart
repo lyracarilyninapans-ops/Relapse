@@ -389,8 +389,8 @@ class _CreateMemoryReminderScreenState
       );
       if (result != null && result.files.single.path != null && mounted) {
         final file = File(result.files.single.path!);
-        if (file.lengthSync() > 20 * 1024 * 1024) {
-          throw Exception('Audio file exceeds the 20MB limit.');
+        if (file.lengthSync() > 50 * 1024 * 1024) {
+          throw Exception('Audio file exceeds the 50MB limit.');
         }
         setState(() {
           _audioFile = file;
@@ -1093,7 +1093,7 @@ class _CreateMemoryReminderScreenState
           ),
           const SizedBox(height: 10),
           Text(
-            'Constraints: Max 20MB per file. Videos max 2 minutes.',
+            'Constraints: Max 50MB per file. Videos max 2 minutes.',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.bold,

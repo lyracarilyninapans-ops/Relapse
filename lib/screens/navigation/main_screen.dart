@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/models/app_user.dart';
 import 'package:relapse_flutter/models/pairing_info.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/notification_providers.dart';
@@ -27,13 +28,36 @@ class MainScreen extends ConsumerStatefulWidget {
 }
 
 class _MainScreenState extends ConsumerState<MainScreen> {
+  String? _lastRegisteredUid;
+  ProviderSubscription<AsyncValue<AppUser?>>? _authStateSub;
+
   @override
   void initState() {
     super.initState();
     // Trigger FCM token registration once the widget tree is ready.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(fcmTokenRegistrationProvider);
+      _registerFcmTokenForCurrentUser();
     });
+
+    _authStateSub = ref.listenManual(authStateProvider, (previous, next) {
+      final uid = next.valueOrNull?.uid;
+      if (uid == null || uid == _lastRegisteredUid) return;
+      _lastRegisteredUid = uid;
+      _registerFcmTokenForCurrentUser();
+    });
+  }
+
+  Future<void> _registerFcmTokenForCurrentUser() async {
+    final uid = ref.read(authStateProvider).valueOrNull?.uid;
+    if (uid == null || uid == _lastRegisteredUid) return;
+    _lastRegisteredUid = uid;
+    await ref.read(notificationServiceProvider).registerFcmToken(uid);
+  }
+
+  @override
+  void dispose() {
+    _authStateSub?.close();
+    super.dispose();
   }
 
   @override

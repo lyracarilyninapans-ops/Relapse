@@ -2,8 +2,10 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
+import { ActivityRecord } from "../types";
 import { toDateString } from "../utils/dates";
 import { sendPushToUser } from "../utils/notifications";
+import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
 
 /**
  * Trigger 6: dailySummaryRollupScheduler
@@ -42,6 +44,7 @@ export const dailySummaryRollupScheduler = onSchedule(
             .where("timestamp", "<", admin.firestore.Timestamp.fromDate(
               new Date(new Date(`${today}T00:00:00`).getTime() + 86400000),
             ))
+            .orderBy("timestamp")
             .get();
 
           if (recordsSnap.empty) continue;
@@ -53,14 +56,44 @@ export const dailySummaryRollupScheduler = onSchedule(
 
           const actualTotal = recordsSnap.size;
           const storedTotal = summaryData?.totalEvents || 0;
+          const dayStart = new Date(`${today}T00:00:00`);
+          const dayEnd = new Date(dayStart.getTime() + 86400000);
+
+          const boundarySnap = await admin.firestore()
+            .collection(paths.activityRecords(uid, patientId))
+            .where("timestamp", "<", admin.firestore.Timestamp.fromDate(dayStart))
+            .orderBy("timestamp", "desc")
+            .limit(20)
+            .get();
+
+          const initiallyOutside = inferInitiallyOutside(
+            boundarySnap.docs.map((doc) => doc.data() as ActivityRecord),
+          );
+
+          const activeMinutes = calculateActiveMinutes(
+            recordsSnap.docs.map((doc) => doc.data() as ActivityRecord),
+            {
+              dayStart,
+              dayEnd,
+              openIntervalEnd: new Date(),
+              initiallyOutside,
+            },
+          );
+          const storedActiveMinutes = summaryData?.activeMinutes || 0;
 
           // Only reconcile if there's drift
-          if (Math.abs(actualTotal - storedTotal) > 1) {
+          if (Math.abs(actualTotal - storedTotal) > 1 || storedActiveMinutes !== activeMinutes) {
             logger.warn("Summary drift detected, reconciling", {
-              uid, patientId, actualTotal, storedTotal,
+              uid,
+              patientId,
+              actualTotal,
+              storedTotal,
+              activeMinutes,
+              storedActiveMinutes,
             });
             await summaryRef.set({
               totalEvents: actualTotal,
+              activeMinutes,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
               reconciledAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });

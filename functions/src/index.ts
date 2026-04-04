@@ -21,9 +21,11 @@ export const mapsSecretCheck = onRequest(
 export {
 	onActivityRecordCreated,
 	onActivityRecordForSummary,
-	onActivityRecordToSafeZoneEvent,
 } from "./triggers/activity_triggers";
-export { onSafeZoneEventCreated } from "./triggers/safe_zone_triggers";
+export {
+	onLocationUpdateToSafeZoneEvent,
+	onSafeZoneEventCreated,
+} from "./triggers/safe_zone_triggers";
 export { onWatchStatusChanged } from "./triggers/watch_status_triggers";
 export { onReminderTriggeredEvent } from "./triggers/reminder_triggers";
 export { dailySummaryRollupScheduler, dailyReportNotificationScheduler } from "./triggers/summary_triggers";

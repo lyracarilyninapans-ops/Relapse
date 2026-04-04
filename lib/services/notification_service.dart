@@ -10,6 +10,9 @@ import 'package:relapse_flutter/models/memory_reminder.dart';
 import 'package:relapse_flutter/models/notification_payload.dart';
 import 'package:relapse_flutter/models/safe_zone_event.dart';
 
+final FirebaseNotificationService appNotificationService =
+  FirebaseNotificationService();
+
 /// Top-level handler for background FCM messages.
 /// Must be a top-level function (not a class method).
 @pragma('vm:entry-point')
@@ -365,7 +368,10 @@ class FirebaseNotificationService implements NotificationService {
   @override
   Future<void> registerFcmToken(String uid) async {
     final token = await getFcmToken();
-    if (token == null) return;
+    if (token == null) {
+      debugPrint('FCM token is null; registration skipped for uid=$uid');
+      return;
+    }
 
     final deviceId = '${Platform.operatingSystem}_${token.hashCode}';
     await _firestore
@@ -378,6 +384,7 @@ class FirebaseNotificationService implements NotificationService {
       'platform': Platform.operatingSystem,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    debugPrint('FCM token registered for uid=$uid deviceId=$deviceId');
 
     // Listen for token refresh
     _messaging.onTokenRefresh.listen((newToken) {
@@ -393,6 +400,7 @@ class FirebaseNotificationService implements NotificationService {
         'platform': Platform.operatingSystem,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      debugPrint('FCM token refreshed for uid=$uid deviceId=$newDeviceId');
     });
   }
 

@@ -24,8 +24,7 @@ Future<void> main() async {
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   // Initialize notification service
-  final notificationService = FirebaseNotificationService();
-  await notificationService.initialize();
+  await appNotificationService.initialize();
 
   // Initialize connectivity monitoring
   final connectivityService = ConnectivityPlusService();

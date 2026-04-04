@@ -6,6 +6,7 @@ import { ActivityRecord } from "../types";
 import { isProcessed, markProcessed } from "../utils/idempotency";
 import { toDateString } from "../utils/dates";
 import { haversineDistance, locationCellKey } from "../utils/geo";
+import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
 
 /**
  * Trigger 1: onActivityRecordCreated
@@ -79,8 +80,39 @@ export const onActivityRecordForSummary = onDocumentCreated(
     if (await isProcessed(lockPath, lockId)) return;
 
     const dateStr = toDateString(data.timestamp);
+    const isToday = dateStr === toDateString(new Date());
+    const dayStart = new Date(`${dateStr}T00:00:00`);
+    const dayEnd = new Date(dayStart.getTime() + 86400000);
     const summaryRef = admin.firestore()
       .doc(`${paths.dailySummaries(uid, patientId)}/${dateStr}`);
+
+    const dayRecordsSnap = await admin.firestore()
+      .collection(paths.activityRecords(uid, patientId))
+      .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(dayStart))
+      .where("timestamp", "<", admin.firestore.Timestamp.fromDate(dayEnd))
+      .orderBy("timestamp")
+      .get();
+
+    const boundarySnap = await admin.firestore()
+      .collection(paths.activityRecords(uid, patientId))
+      .where("timestamp", "<", admin.firestore.Timestamp.fromDate(dayStart))
+      .orderBy("timestamp", "desc")
+      .limit(20)
+      .get();
+
+    const initiallyOutside = inferInitiallyOutside(
+      boundarySnap.docs.map((doc) => doc.data() as ActivityRecord),
+    );
+
+    const activeMinutes = calculateActiveMinutes(
+      dayRecordsSnap.docs.map((doc) => doc.data() as ActivityRecord),
+      {
+        dayStart,
+        dayEnd,
+        openIntervalEnd: isToday ? new Date() : dayEnd,
+        initiallyOutside,
+      },
+    );
 
     await admin.firestore().runTransaction(async (txn) => {
       const summarySnap = await txn.get(summaryRef);
@@ -97,6 +129,7 @@ export const onActivityRecordForSummary = onDocumentCreated(
 
       const updates: Record<string, unknown> = {
         totalEvents: (existing.totalEvents || 0) + 1,
+        activeMinutes,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
@@ -139,88 +172,3 @@ export const onActivityRecordForSummary = onDocumentCreated(
   },
 );
 
-/**
- * Trigger 3: onActivityRecordToSafeZoneEvent
- * Mirrors safe_zone_enter/exit activity records into safeZoneEvents.
- */
-export const onActivityRecordToSafeZoneEvent = onDocumentCreated(
-  {
-    document: "users/{uid}/patients/{patientId}/activityRecords/{recordId}",
-    region: REGION,
-  },
-  async (event) => {
-    const snap = event.data;
-    if (!snap) return;
-
-    const { uid, patientId, recordId } = event.params;
-    const data = snap.data() as ActivityRecord;
-
-    if (!data.timestamp || !data.eventType) return;
-
-    const mappedEventType = data.eventType === "safe_zone_exit"
-      ? "exit"
-      : data.eventType === "safe_zone_enter"
-        ? "enter"
-        : null;
-
-    if (!mappedEventType) return;
-
-    const lockPath = paths.functionLocks(uid, patientId);
-    const lockId = `safezone_from_activity_${recordId}`;
-    if (await isProcessed(lockPath, lockId)) return;
-
-    let safeZoneId = "unknown";
-
-    const metadata = data.metadata;
-    if (metadata && typeof metadata === "object" && "safeZoneId" in metadata) {
-      const maybeId = (metadata as Record<string, unknown>)["safeZoneId"];
-      if (typeof maybeId === "string" && maybeId.trim().length > 0) {
-        safeZoneId = maybeId.trim();
-      }
-    }
-
-    if (safeZoneId === "unknown") {
-      try {
-        const activeZonesSnap = await admin.firestore()
-          .collection(paths.safeZones(uid, patientId))
-          .where("isActive", "==", true)
-          .limit(1)
-          .get();
-
-        if (!activeZonesSnap.empty) {
-          safeZoneId = activeZonesSnap.docs[0].id;
-        }
-      } catch (err) {
-        logger.warn("Failed to resolve active safe zone while mirroring activity", {
-          uid,
-          patientId,
-          recordId,
-          err,
-        });
-      }
-    }
-
-    const eventRef = admin.firestore().doc(`${paths.safeZoneEvents(uid, patientId)}/${recordId}`);
-    await eventRef.set({
-      id: recordId,
-      patientId,
-      safeZoneId,
-      eventType: mappedEventType,
-      timestamp: data.timestamp,
-      latitude: data.latitude ?? null,
-      longitude: data.longitude ?? null,
-      source: "activity_record",
-      sourceRecordId: recordId,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    await markProcessed(lockPath, lockId);
-    logger.info("Mirrored activity record to safe zone event", {
-      uid,
-      patientId,
-      recordId,
-      eventType: mappedEventType,
-      safeZoneId,
-    });
-  },
-);
