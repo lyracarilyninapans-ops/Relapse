@@ -9,7 +9,7 @@ admin.initializeApp();
 const mapsServerApiKey = defineSecret("MAPS_SERVER_API_KEY");
 
 export const mapsSecretCheck = onRequest(
-	{ region: "asia-southeast1", invoker: "public", secrets: [mapsServerApiKey] },
+	{ region: "asia-southeast1", secrets: [mapsServerApiKey] },
 	(req, res) => {
 		const key = mapsServerApiKey.value();
 		logger.info("maps secret check", { hasKey: Boolean(key) });
@@ -23,8 +23,7 @@ export {
 	onActivityRecordForSummary,
 } from "./triggers/activity_triggers";
 export {
-	onLocationUpdateToSafeZoneEvent,
-	onSafeZoneEventCreated,
+	onLocationUpdateToSafeZoneEvaluation,
 } from "./triggers/safe_zone_triggers";
 export { onWatchStatusChanged } from "./triggers/watch_status_triggers";
 export { onReminderTriggeredEvent } from "./triggers/reminder_triggers";

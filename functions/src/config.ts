@@ -3,7 +3,7 @@
 export const REGION = "asia-southeast1";
 
 /** Cooldown window (ms) to prevent alert storms for safe zone events. */
-export const SAFE_ZONE_COOLDOWN_MS = 60 * 1000; // 1 minute
+export const SAFE_ZONE_COOLDOWN_MS = 10 * 1000; // 10 seconds
 
 /** Duration (ms) of sustained disconnect before sending warning. */
 export const WATCH_DISCONNECT_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes

@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
 import { ActivityRecord } from "../types";
-import { isProcessed, markProcessed } from "../utils/idempotency";
+import { claimLock } from "../utils/idempotency";
 import { sendPushToUser } from "../utils/notifications";
 
 /**
@@ -26,9 +26,10 @@ export const onReminderTriggeredEvent = onDocumentCreated(
     // Only process reminder_triggered events
     if (data.eventType !== "reminder_triggered") return;
 
+    // Atomic idempotency lock — claim FIRST before sending push
     const lockPath = paths.functionLocks(uid, patientId);
     const lockId = `reminder_push_${recordId}`;
-    if (await isProcessed(lockPath, lockId)) return;
+    if (!(await claimLock(lockPath, lockId))) return;
 
     // Try to resolve the reminder title
     const reminderId = (data.metadata?.reminderId as string) || "";
@@ -59,7 +60,6 @@ export const onReminderTriggeredEvent = onDocumentCreated(
       },
     );
 
-    await markProcessed(lockPath, lockId);
     logger.info("Reminder push sent", { uid, patientId, recordId, reminderId, sent });
   },
 );

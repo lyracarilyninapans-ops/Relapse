@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +33,7 @@ class CreateMemoryReminderScreen extends ConsumerStatefulWidget {
 
 class _CreateMemoryReminderScreenState
     extends ConsumerState<CreateMemoryReminderScreen> {
+  static const Duration _maxAudioDuration = Duration(minutes: 2);
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 14,
@@ -392,6 +395,7 @@ class _CreateMemoryReminderScreenState
         if (file.lengthSync() > 50 * 1024 * 1024) {
           throw Exception('Audio file exceeds the 50MB limit.');
         }
+        await _validateAudioDuration(file);
         setState(() {
           _audioFile = file;
           _hasAudio = true;
@@ -404,6 +408,39 @@ class _CreateMemoryReminderScreenState
           SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
         );
       }
+    }
+  }
+
+  Future<void> _validateAudioDuration(File file) async {
+    final player = AudioPlayer();
+    StreamSubscription<Duration>? durationSubscription;
+    final completer = Completer<Duration?>();
+
+    try {
+      durationSubscription = player.onDurationChanged.listen((duration) {
+        if (!completer.isCompleted && duration > Duration.zero) {
+          completer.complete(duration);
+        }
+      });
+
+      await player.setSourceDeviceFile(file.path);
+
+      Duration? duration = await player.getDuration();
+      duration ??= await completer.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => null,
+      );
+
+      if (duration == null || duration <= Duration.zero) {
+        throw Exception('Unable to read audio duration. Please choose another file.');
+      }
+
+      if (duration > _maxAudioDuration) {
+        throw Exception('Audio length must be 2 minutes or less.');
+      }
+    } finally {
+      await durationSubscription?.cancel();
+      await player.dispose();
     }
   }
 
@@ -1093,7 +1130,7 @@ class _CreateMemoryReminderScreenState
           ),
           const SizedBox(height: 10),
           Text(
-            'Constraints: Max 50MB per file. Videos max 2 minutes.',
+            'Constraints: Max 50MB per file. Audio and videos max 2 minutes.',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.bold,
@@ -1113,7 +1150,7 @@ class _CreateMemoryReminderScreenState
           _mediaCard(
             icon: Icons.mic,
             title: 'Audio',
-            subtitle: 'Use alone or with Photo',
+            subtitle: 'Use alone or with Photo (max 2 min)',
             hasMedia: _hasAudio,
             isDisabled: isAudioDisabled,
             onTap: () => _toggleMedia('audio'),

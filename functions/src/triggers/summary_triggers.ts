@@ -3,47 +3,74 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
 import { ActivityRecord } from "../types";
-import { toDateString } from "../utils/dates";
+import { toDateString, utcDayStart, utcDayEnd } from "../utils/dates";
 import { sendPushToUser } from "../utils/notifications";
 import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
+
+/** Batch size for paginating user and patient collections. */
+const BATCH_SIZE = 100;
+
+/**
+ * Helper: iterate a Firestore collection in batches to avoid loading
+ * all documents into memory at once. Yields document snapshots.
+ */
+async function* paginateCollection(
+  collectionRef: admin.firestore.CollectionReference,
+  batchSize: number,
+): AsyncGenerator<admin.firestore.QueryDocumentSnapshot> {
+  let lastDoc: admin.firestore.DocumentSnapshot | null = null;
+
+  while (true) {
+    let query = collectionRef.orderBy("__name__").limit(batchSize);
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+    const snap = await query.get();
+    if (snap.empty) break;
+
+    for (const doc of snap.docs) {
+      yield doc;
+    }
+
+    lastDoc = snap.docs[snap.docs.length - 1];
+    if (snap.docs.length < batchSize) break;
+  }
+}
 
 /**
  * Trigger 6: dailySummaryRollupScheduler
  * Reconciles any missed increments and ensures summary correctness.
- * Runs every 15 minutes.
+ * Runs every 15 minutes. Paginates users and patients to avoid timeouts.
  */
 export const dailySummaryRollupScheduler = onSchedule(
   {
     schedule: "every 15 minutes",
     region: REGION,
-    timeoutSeconds: 120,
+    timeoutSeconds: 300,
   },
   async () => {
     const today = toDateString(new Date());
+    const dayStart = utcDayStart(today);
+    const dayEnd = utcDayEnd(today);
     logger.info("Daily summary rollup started", { date: today });
 
-    // Iterate over all users with patients
-    const usersSnap = await admin.firestore().collection("users").get();
-
-    for (const userDoc of usersSnap.docs) {
+    for await (const userDoc of paginateCollection(
+      admin.firestore().collection("users"),
+      BATCH_SIZE,
+    )) {
       const uid = userDoc.id;
-      const patientsSnap = await admin.firestore()
-        .collection(`users/${uid}/patients`)
-        .get();
 
-      for (const patientDoc of patientsSnap.docs) {
+      for await (const patientDoc of paginateCollection(
+        admin.firestore().collection(`users/${uid}/patients`),
+        BATCH_SIZE,
+      )) {
         const patientId = patientDoc.id;
 
         try {
-          // Count today's records
           const recordsSnap = await admin.firestore()
             .collection(paths.activityRecords(uid, patientId))
-            .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(
-              new Date(`${today}T00:00:00`),
-            ))
-            .where("timestamp", "<", admin.firestore.Timestamp.fromDate(
-              new Date(new Date(`${today}T00:00:00`).getTime() + 86400000),
-            ))
+            .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(dayStart))
+            .where("timestamp", "<", admin.firestore.Timestamp.fromDate(dayEnd))
             .orderBy("timestamp")
             .get();
 
@@ -56,8 +83,6 @@ export const dailySummaryRollupScheduler = onSchedule(
 
           const actualTotal = recordsSnap.size;
           const storedTotal = summaryData?.totalEvents || 0;
-          const dayStart = new Date(`${today}T00:00:00`);
-          const dayEnd = new Date(dayStart.getTime() + 86400000);
 
           const boundarySnap = await admin.firestore()
             .collection(paths.activityRecords(uid, patientId))
@@ -111,27 +136,28 @@ export const dailySummaryRollupScheduler = onSchedule(
 /**
  * Trigger 7: dailyReportNotificationScheduler
  * Sends daily report push from finalized summary values.
- * Runs every day at 20:00 UTC.
+ * Runs every day at 20:00 UTC. Paginates users and patients.
  */
 export const dailyReportNotificationScheduler = onSchedule(
   {
     schedule: "every day 20:00",
     region: REGION,
-    timeoutSeconds: 120,
+    timeoutSeconds: 300,
   },
   async () => {
     const today = toDateString(new Date());
     logger.info("Daily report notification started", { date: today });
 
-    const usersSnap = await admin.firestore().collection("users").get();
-
-    for (const userDoc of usersSnap.docs) {
+    for await (const userDoc of paginateCollection(
+      admin.firestore().collection("users"),
+      BATCH_SIZE,
+    )) {
       const uid = userDoc.id;
-      const patientsSnap = await admin.firestore()
-        .collection(`users/${uid}/patients`)
-        .get();
 
-      for (const patientDoc of patientsSnap.docs) {
+      for await (const patientDoc of paginateCollection(
+        admin.firestore().collection(`users/${uid}/patients`),
+        BATCH_SIZE,
+      )) {
         const patientId = patientDoc.id;
         const patientName = patientDoc.data()?.name || "your patient";
 

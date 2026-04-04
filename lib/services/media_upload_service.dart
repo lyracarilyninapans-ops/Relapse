@@ -1,11 +1,14 @@
 import 'dart:io';
+import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 /// Service for uploading media files (photos, audio, video) to Firebase Storage.
 class MediaUploadService {
+  static const Duration _maxAudioDuration = Duration(minutes: 2);
   final FirebaseStorage _storage;
   final ImagePicker _imagePicker;
 
@@ -99,11 +102,48 @@ class MediaUploadService {
     required String mediaType,
     void Function(double progress)? onProgress,
   }) async {
+    if (mediaType == 'audio') {
+      await _validateAudioDuration(file);
+    }
+
     final ext = file.path.split('.').last;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final path =
         'users/$uid/patients/$patientId/memories/$reminderId/${mediaType}_$timestamp.$ext';
     return uploadFile(file: file, storagePath: path, onProgress: onProgress);
+  }
+
+  Future<void> _validateAudioDuration(File file) async {
+    final player = AudioPlayer();
+    StreamSubscription<Duration>? durationSubscription;
+    final completer = Completer<Duration?>();
+
+    try {
+      durationSubscription = player.onDurationChanged.listen((duration) {
+        if (!completer.isCompleted && duration > Duration.zero) {
+          completer.complete(duration);
+        }
+      });
+
+      await player.setSourceDeviceFile(file.path);
+
+      Duration? duration = await player.getDuration();
+      duration ??= await completer.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => null,
+      );
+
+      if (duration == null || duration <= Duration.zero) {
+        throw Exception('Unable to read audio duration. Please choose another file.');
+      }
+
+      if (duration > _maxAudioDuration) {
+        throw Exception('Audio length must be 2 minutes or less.');
+      }
+    } finally {
+      await durationSubscription?.cancel();
+      await player.dispose();
+    }
   }
 
   /// Uploads a profile picture and returns the download URL.

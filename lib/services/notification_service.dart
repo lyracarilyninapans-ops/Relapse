@@ -177,21 +177,27 @@ class FirebaseNotificationService implements NotificationService {
     final notification = message.notification;
     if (notification == null) return;
 
-    // Show as local notification since FCM doesn't auto-display in foreground
-    _localNotifications.show(
-      message.hashCode,
-      notification.title ?? 'Relapse',
-      notification.body ?? '',
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _inferChannel(message.data),
-          _inferChannelName(message.data),
-          importance: Importance.high,
-          priority: Priority.high,
+    // Show as local notification on Android, since FCM doesn't auto-display
+    // in the foreground on Android. 
+    // On iOS, we configured `setForegroundNotificationPresentationOptions(alert: true)`
+    // meaning the APNs system will display it natively. Calling 
+    // `_localNotifications.show()` on iOS would result in a duplicate banner.
+    if (!Platform.isIOS) {
+      _localNotifications.show(
+        message.hashCode,
+        notification.title ?? 'Relapse',
+        notification.body ?? '',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _inferChannel(message.data),
+            _inferChannelName(message.data),
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
         ),
-      ),
-      payload: jsonEncode(message.data),
-    );
+        payload: jsonEncode(message.data),
+      );
+    }
   }
 
   void _handleMessageOpenedApp(RemoteMessage message) {

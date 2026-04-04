@@ -3,8 +3,8 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
 import { ActivityRecord } from "../types";
-import { isProcessed, markProcessed } from "../utils/idempotency";
-import { toDateString } from "../utils/dates";
+import { claimLock } from "../utils/idempotency";
+import { toDateString, utcDayStart, utcDayEnd } from "../utils/dates";
 import { haversineDistance, locationCellKey } from "../utils/geo";
 import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
 
@@ -33,9 +33,10 @@ export const onActivityRecordCreated = onDocumentCreated(
       return;
     }
 
+    // Atomic idempotency lock
     const lockPath = paths.functionLocks(uid, patientId);
     const lockId = `activity_${recordId}`;
-    if (await isProcessed(lockPath, lockId)) {
+    if (!(await claimLock(lockPath, lockId))) {
       logger.info("Already processed", { lockId });
       return;
     }
@@ -52,7 +53,6 @@ export const onActivityRecordCreated = onDocumentCreated(
         }, { merge: true });
     }
 
-    await markProcessed(lockPath, lockId);
     logger.info("Activity record processed", { uid, patientId, recordId, eventType: data.eventType });
   },
 );
@@ -60,6 +60,9 @@ export const onActivityRecordCreated = onDocumentCreated(
 /**
  * Trigger 2: onActivityRecordForSummary
  * Incrementally maintains dailySummaries/{date} for Activity Screen cards.
+ *
+ * Uses a full recount from source records inside a transaction to ensure
+ * idempotency — this is safe because retries produce the same result.
  */
 export const onActivityRecordForSummary = onDocumentCreated(
   {
@@ -75,17 +78,19 @@ export const onActivityRecordForSummary = onDocumentCreated(
 
     if (!data.timestamp || !data.eventType) return;
 
+    // Atomic idempotency lock
     const lockPath = paths.functionLocks(uid, patientId);
     const lockId = `summary_${recordId}`;
-    if (await isProcessed(lockPath, lockId)) return;
+    if (!(await claimLock(lockPath, lockId))) return;
 
     const dateStr = toDateString(data.timestamp);
     const isToday = dateStr === toDateString(new Date());
-    const dayStart = new Date(`${dateStr}T00:00:00`);
-    const dayEnd = new Date(dayStart.getTime() + 86400000);
+    const dayStart = utcDayStart(dateStr);
+    const dayEnd = utcDayEnd(dateStr);
     const summaryRef = admin.firestore()
       .doc(`${paths.dailySummaries(uid, patientId)}/${dateStr}`);
 
+    // Fetch ALL records for the day to compute idempotent totals
     const dayRecordsSnap = await admin.firestore()
       .collection(paths.activityRecords(uid, patientId))
       .where("timestamp", ">=", admin.firestore.Timestamp.fromDate(dayStart))
@@ -100,75 +105,68 @@ export const onActivityRecordForSummary = onDocumentCreated(
       .limit(20)
       .get();
 
+    const allRecords = dayRecordsSnap.docs.map((doc) => doc.data() as ActivityRecord);
+
     const initiallyOutside = inferInitiallyOutside(
       boundarySnap.docs.map((doc) => doc.data() as ActivityRecord),
     );
 
-    const activeMinutes = calculateActiveMinutes(
-      dayRecordsSnap.docs.map((doc) => doc.data() as ActivityRecord),
-      {
-        dayStart,
-        dayEnd,
-        openIntervalEnd: isToday ? new Date() : dayEnd,
-        initiallyOutside,
-      },
-    );
-
-    await admin.firestore().runTransaction(async (txn) => {
-      const summarySnap = await txn.get(summaryRef);
-      const existing = summarySnap.data() || {
-        date: dateStr,
-        patientId: patientId,
-        totalEvents: 0,
-        safeZoneExits: 0,
-        remindersTriggered: 0,
-        distanceMeters: 0,
-        activeMinutes: 0,
-        placesVisited: 0,
-      };
-
-      const updates: Record<string, unknown> = {
-        totalEvents: (existing.totalEvents || 0) + 1,
-        activeMinutes,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      };
-
-      if (data.eventType === "safe_zone_exit") {
-        updates.safeZoneExits = (existing.safeZoneExits || 0) + 1;
-      }
-      if (data.eventType === "reminder_triggered") {
-        updates.remindersTriggered = (existing.remindersTriggered || 0) + 1;
-      }
-
-      // Distance calculation for sequential location points
-      if (data.eventType === "location_update" && data.latitude != null && data.longitude != null) {
-        // Track places visited via location cells
-        const cellKey = locationCellKey(data.latitude, data.longitude);
-        const visitedCells: string[] = existing.visitedCells || [];
-        if (!visitedCells.includes(cellKey)) {
-          visitedCells.push(cellKey);
-          updates.visitedCells = visitedCells;
-          updates.placesVisited = visitedCells.length;
-        }
-
-        // Compute segment distance from last known location
-        if (existing.lastLat != null && existing.lastLng != null) {
-          const segmentDist = haversineDistance(
-            existing.lastLat, existing.lastLng,
-            data.latitude, data.longitude,
-          );
-          updates.distanceMeters = (existing.distanceMeters || 0) + segmentDist;
-        }
-
-        updates.lastLat = data.latitude;
-        updates.lastLng = data.longitude;
-      }
-
-      txn.set(summaryRef, { ...existing, ...updates }, { merge: true });
+    const activeMinutes = calculateActiveMinutes(allRecords, {
+      dayStart,
+      dayEnd,
+      openIntervalEnd: isToday ? new Date() : dayEnd,
+      initiallyOutside,
     });
 
-    await markProcessed(lockPath, lockId);
+    // Compute all metrics from source records (idempotent)
+    let totalEvents = 0;
+    let safeZoneExits = 0;
+    let remindersTriggered = 0;
+    let distanceMeters = 0;
+    let lastLat: number | undefined;
+    let lastLng: number | undefined;
+    const visitedCellsMap: Record<string, true> = {};
+
+    for (const rec of allRecords) {
+      totalEvents++;
+      if (rec.eventType === "safe_zone_exit") safeZoneExits++;
+      if (rec.eventType === "reminder_triggered") remindersTriggered++;
+
+      if (rec.eventType === "location_update" && rec.latitude != null && rec.longitude != null) {
+        const cellKey = locationCellKey(rec.latitude, rec.longitude);
+        visitedCellsMap[cellKey] = true;
+
+        if (lastLat != null && lastLng != null) {
+          const segmentDist = haversineDistance(lastLat, lastLng, rec.latitude, rec.longitude);
+          distanceMeters += segmentDist;
+        }
+        lastLat = rec.latitude;
+        lastLng = rec.longitude;
+      }
+    }
+
+    const placesVisited = Object.keys(visitedCellsMap).length;
+
+    await admin.firestore().runTransaction(async (txn) => {
+      // Read inside transaction to avoid overwriting concurrent updates
+      await txn.get(summaryRef);
+
+      txn.set(summaryRef, {
+        date: dateStr,
+        patientId,
+        totalEvents,
+        safeZoneExits,
+        remindersTriggered,
+        distanceMeters,
+        activeMinutes,
+        placesVisited,
+        visitedCells: visitedCellsMap,
+        lastLat,
+        lastLng,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
     logger.info("Daily summary updated", { uid, patientId, dateStr });
   },
 );
-

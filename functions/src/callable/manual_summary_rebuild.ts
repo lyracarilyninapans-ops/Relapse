@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { REGION, paths } from "../config";
 import { ActivityRecord } from "../types";
-import { toDateString } from "../utils/dates";
+import { toDateString, utcDayStart, utcDayEnd } from "../utils/dates";
 import { calculateActiveMinutes, inferInitiallyOutside } from "../utils/summary_metrics";
 
 /**
@@ -27,9 +27,9 @@ export const manualSummaryRebuild = onCall(
     const targetDate = date || toDateString(new Date());
     logger.info("Manual summary rebuild requested", { uid, patientId, targetDate });
 
-    // Fetch all records for the day
-    const startOfDay = new Date(`${targetDate}T00:00:00`);
-    const endOfDay = new Date(startOfDay.getTime() + 86400000);
+    // Fetch all records for the day (UTC bucketed)
+    const startOfDay = utcDayStart(targetDate);
+    const endOfDay = utcDayEnd(targetDate);
 
     const recordsSnap = await admin.firestore()
       .collection(paths.activityRecords(uid, patientId))
