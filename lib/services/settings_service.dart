@@ -12,6 +12,8 @@ class SettingsService {
   static const _keyDailyReportHour = 'daily_report_hour';
   static const _keyDailyReportMinute = 'daily_report_minute';
   static const _keyThemeMode = 'theme_mode'; // system, light, dark
+  static const _keyUseOptimizedLatestLocationQuery =
+      'use_optimized_latest_location_query';
 
   final FirebaseFirestore _firestore;
 
@@ -79,6 +81,13 @@ class SettingsService {
         .set({_keyThemeMode: mode}, SetOptions(merge: true));
   }
 
+  Future<void> setUseOptimizedLatestLocationQuery(String uid, bool enabled) {
+    return _settingsDoc(uid).set(
+      {_keyUseOptimizedLatestLocationQuery: enabled},
+      SetOptions(merge: true),
+    );
+  }
+
   // ─── Local cache helpers (SharedPreferences — offline fallback) ─────
 
   /// Hydrate SharedPreferences from the cloud snapshot so cold starts
@@ -91,6 +100,10 @@ class SettingsService {
     await prefs.setInt(_keyDailyReportHour, settings.dailyReportHour);
     await prefs.setInt(_keyDailyReportMinute, settings.dailyReportMinute);
     await prefs.setString(_keyThemeMode, settings.themeMode);
+    await prefs.setBool(
+      _keyUseOptimizedLatestLocationQuery,
+      settings.useOptimizedLatestLocationQuery,
+    );
   }
 
   /// Read settings from the local cache (used for cold start before
@@ -102,6 +115,8 @@ class SettingsService {
       dailyReportHour: prefs.getInt(_keyDailyReportHour) ?? 20,
       dailyReportMinute: prefs.getInt(_keyDailyReportMinute) ?? 0,
       themeMode: prefs.getString(_keyThemeMode) ?? 'system',
+      useOptimizedLatestLocationQuery:
+          prefs.getBool(_keyUseOptimizedLatestLocationQuery) ?? true,
     );
   }
 }
@@ -113,6 +128,7 @@ class AppSettings {
   final int dailyReportHour;
   final int dailyReportMinute;
   final String themeMode;
+  final bool useOptimizedLatestLocationQuery;
 
   const AppSettings({
     required this.reminderCooldownMinutes,
@@ -120,6 +136,7 @@ class AppSettings {
     required this.dailyReportHour,
     required this.dailyReportMinute,
     required this.themeMode,
+    required this.useOptimizedLatestLocationQuery,
   });
 
   factory AppSettings.defaults() => const AppSettings(
@@ -128,6 +145,7 @@ class AppSettings {
         dailyReportHour: 20,
         dailyReportMinute: 0,
         themeMode: 'system',
+      useOptimizedLatestLocationQuery: true,
       );
 
   factory AppSettings.fromMap(Map<String, dynamic> data) {
@@ -139,6 +157,8 @@ class AppSettings {
       dailyReportHour: (data['daily_report_hour'] as num?)?.toInt() ?? 20,
       dailyReportMinute: (data['daily_report_minute'] as num?)?.toInt() ?? 0,
       themeMode: data['theme_mode'] as String? ?? 'system',
+      useOptimizedLatestLocationQuery:
+          data['use_optimized_latest_location_query'] as bool? ?? true,
     );
   }
 }

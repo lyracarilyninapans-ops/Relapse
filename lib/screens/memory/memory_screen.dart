@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -8,6 +10,7 @@ import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
+import 'package:relapse_flutter/utils/map_marker_icon_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Memory map screen with search toggle, real memory markers, and FAB.
@@ -23,14 +26,59 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
   final _searchController = TextEditingController();
   GoogleMapController? _mapController;
   bool _pendingInitialFocus = true;
+  Set<Marker> _cachedMarkers = <Marker>{};
+  Set<Circle> _cachedCircles = <Circle>{};
+  String _markerSignature = '';
+  String _circleSignature = '';
+  BitmapDescriptor _patientMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
+  BitmapDescriptor _memoryMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 13.2,
   );
 
-  Set<Marker> _buildMarkers(
-      List<MemoryReminder> reminders, LatLng? patientPos) {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadMarkerIcons());
+  }
+
+  Future<void> _loadMarkerIcons() async {
+    final patientIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.person_pin_circle,
+      iconColor: AppColors.gradientStart,
+    );
+    final memoryIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.place,
+      iconColor: AppColors.gradientMiddle,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _patientMarkerIcon = patientIcon;
+      _memoryMarkerIcon = memoryIcon;
+      _markerSignature = '';
+      _cachedMarkers = <Marker>{};
+    });
+  }
+
+  Set<Marker> _buildMarkersMemoized(
+    List<MemoryReminder> reminders,
+    LatLng? patientPos,
+  ) {
+    final patientName = ref.read(selectedPatientProvider)?.name ?? 'Patient';
+    final markerKey = [
+      'patient:${patientPos?.latitude}:${patientPos?.longitude}:$patientName',
+      for (final reminder in reminders)
+        'r:${reminder.id}:${reminder.latitude}:${reminder.longitude}:${reminder.title}',
+    ].join('|');
+    if (markerKey == _markerSignature) {
+      return _cachedMarkers;
+    }
+
     final markers = <Marker>{};
 
     for (final reminder in reminders) {
@@ -39,29 +87,34 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
           markerId: MarkerId('memory_${reminder.id}'),
           position: LatLng(reminder.latitude!, reminder.longitude!),
           infoWindow: InfoWindow(title: reminder.title),
-          icon:
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          icon: _memoryMarkerIcon,
         ));
       }
     }
 
     if (patientPos != null) {
-      final patientName =
-          ref.read(selectedPatientProvider)?.name ?? 'Patient';
       markers.add(Marker(
         markerId: const MarkerId('patient_location'),
         position: patientPos,
         infoWindow: InfoWindow(title: patientName),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        alpha: 0,
+        icon: _patientMarkerIcon,
       ));
     }
 
+    _markerSignature = markerKey;
+    _cachedMarkers = markers;
     return markers;
   }
 
-  Set<Circle> _buildCircles(List<MemoryReminder> reminders) {
-    return reminders
+  Set<Circle> _buildCirclesMemoized(List<MemoryReminder> reminders) {
+    final circleKey = reminders
+        .map((r) => '${r.id}:${r.latitude}:${r.longitude}:${r.radiusMeters}')
+        .join('|');
+    if (circleKey == _circleSignature) {
+      return _cachedCircles;
+    }
+
+    final circles = reminders
         .where((r) => r.latitude != null && r.longitude != null)
         .map((r) => Circle(
               circleId: CircleId('memory_radius_${r.id}'),
@@ -72,6 +125,10 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
               fillColor: AppColors.primaryColor.withAlpha(26),
             ))
         .toSet();
+
+    _circleSignature = circleKey;
+    _cachedCircles = circles;
+    return circles;
   }
 
   Future<void> _focusReminder(MemoryReminder reminder) async {
@@ -202,8 +259,8 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
               _mapController = controller;
               _tryAutoFocus();
             },
-            markers: _buildMarkers(reminders, patientPos),
-            circles: _buildCircles(reminders),
+            markers: _buildMarkersMemoized(reminders, patientPos),
+            circles: _buildCirclesMemoized(reminders),
             compassEnabled: true,
             zoomControlsEnabled: false,
             scrollGesturesEnabled: true,

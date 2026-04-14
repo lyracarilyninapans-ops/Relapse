@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -6,6 +8,7 @@ import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
+import 'package:relapse_flutter/utils/map_marker_icon_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Safe Zone Map screen with status banner, info card, and recenter FAB.
@@ -19,11 +22,37 @@ class SafeZoneMapScreen extends ConsumerStatefulWidget {
 class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
   GoogleMapController? _mapController;
   bool _pendingInitialFocus = true;
+  BitmapDescriptor _safeZoneMarkerIcon = BitmapDescriptor.defaultMarker;
+  BitmapDescriptor _patientMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 14.5,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadMarkerIcons());
+  }
+
+  Future<void> _loadMarkerIcons() async {
+    final safeZoneIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.shield,
+      iconColor: AppColors.gradientMiddle,
+    );
+    final patientIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.person_pin_circle,
+      iconColor: AppColors.gradientStart,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _safeZoneMarkerIcon = safeZoneIcon;
+      _patientMarkerIcon = patientIcon;
+    });
+  }
 
   Set<Marker> _buildMarkers(bool isInside, LatLng? patientPos, LatLng? szCenter) {
     final markers = <Marker>{};
@@ -33,6 +62,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
         markerId: const MarkerId('safe_zone_center'),
         position: szCenter,
         infoWindow: const InfoWindow(title: 'Safe Zone Center'),
+        icon: _safeZoneMarkerIcon,
       ));
     }
 
@@ -42,9 +72,7 @@ class _SafeZoneMapScreenState extends ConsumerState<SafeZoneMapScreen> {
         markerId: const MarkerId('patient_location'),
         position: patientPos,
         infoWindow: InfoWindow(title: patientName),
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-          isInside ? BitmapDescriptor.hueGreen : BitmapDescriptor.hueRed,
-        ),
+        icon: _patientMarkerIcon,
       ));
     }
 

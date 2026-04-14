@@ -62,7 +62,7 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
           .submitPairingCode(authUser.uid, code);
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(
+      await Navigator.pushReplacementNamed(
         context,
         Routes.patientSetup,
         arguments: watchId,

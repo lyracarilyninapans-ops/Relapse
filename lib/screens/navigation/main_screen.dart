@@ -30,6 +30,7 @@ class MainScreen extends ConsumerStatefulWidget {
 class _MainScreenState extends ConsumerState<MainScreen> {
   String? _lastRegisteredUid;
   ProviderSubscription<AsyncValue<AppUser?>>? _authStateSub;
+  final Set<int> _initializedTabs = <int>{0};
 
   @override
   void initState() {
@@ -64,6 +65,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   Widget build(BuildContext context) {
     final currentIndex = ref.watch(mainTabIndexProvider);
 
+    if (!_initializedTabs.contains(currentIndex)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _ensureTabInitialized(currentIndex);
+      });
+    }
+
     // Listen for remote unpair (watch-initiated).
     // When the watch unpairs, Firestore status transitions to 'unpaired'.
     // The pairingInfoProvider stream picks this up and we redirect.
@@ -87,7 +95,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       switch (payload.screen) {
         case 'activity':
-          ref.read(mainTabIndexProvider.notifier).state = 3;
+          _setMainTab(3);
           break;
         case 'memory_details':
           if (payload.reminderId != null) {
@@ -97,7 +105,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               arguments: payload.reminderId,
             );
           } else {
-            ref.read(mainTabIndexProvider.notifier).state = 1;
+            _setMainTab(1);
           }
           break;
         default:
@@ -113,21 +121,47 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           Expanded(
             child: IndexedStack(
               index: currentIndex,
-              children: const [
-                HomeScreen(),
-                MemoryScreen(),
-                SafeZoneMapScreen(),
-                ActivityScreen(),
-              ],
+              children: _buildTabChildren(),
             ),
           ),
         ],
       ),
       bottomNavigationBar: CustomBottomNavigationBar(
         currentIndex: currentIndex,
-        onTap: (index) => ref.read(mainTabIndexProvider.notifier).state = index,
+        onTap: _setMainTab,
       ),
     );
+  }
+
+  void _setMainTab(int index) {
+    _ensureTabInitialized(index);
+    ref.read(mainTabIndexProvider.notifier).state = index;
+  }
+
+  void _ensureTabInitialized(int index) {
+    if (_initializedTabs.contains(index)) return;
+    setState(() {
+      _initializedTabs.add(index);
+    });
+  }
+
+  List<Widget> _buildTabChildren() {
+    return List<Widget>.generate(4, (index) {
+      if (!_initializedTabs.contains(index)) {
+        return const SizedBox.shrink();
+      }
+
+      return KeyedSubtree(
+        key: ValueKey<int>(index),
+        child: switch (index) {
+          0 => const HomeScreen(),
+          1 => const MemoryScreen(),
+          2 => const SafeZoneMapScreen(),
+          3 => const ActivityScreen(),
+          _ => const SizedBox.shrink(),
+        },
+      );
+    });
   }
 
   /// Called when the watch initiates an unpair and we detect it via Firestore.
@@ -144,7 +178,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Best-effort cleanup; navigation still happens.
     }
     if (mounted) {
-      Navigator.pushNamedAndRemoveUntil(
+      await Navigator.pushNamedAndRemoveUntil(
         context,
         Routes.addPatient,
         (route) => false,

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:relapse_flutter/models/app_user.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
@@ -14,6 +17,9 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
+  ProviderSubscription<AsyncValue<AppUser?>>? _authWaitSubscription;
+  bool _didNavigate = false;
+
   @override
   void initState() {
     super.initState();
@@ -23,40 +29,51 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Future<void> _navigateToNextScreen() async {
     await Future<void>.delayed(const Duration(seconds: 2));
     if (!mounted) return;
+    if (_didNavigate) return;
 
     final authState = ref.read(authStateProvider);
     authState.when(
       data: (user) {
-        if (!mounted) return;
-        if (user != null) {
-          Navigator.pushReplacementNamed(context, Routes.main);
-        } else {
-          Navigator.pushReplacementNamed(context, Routes.login);
-        }
+        unawaited(_navigateForUser(user));
       },
       loading: () {
         // Still loading — listen for the first emission
         _waitForAuth();
       },
       error: (error, stackTrace) {
-        if (!mounted) return;
-        Navigator.pushReplacementNamed(context, Routes.login);
+        unawaited(_navigateForUser(null));
       },
     );
   }
 
   void _waitForAuth() {
-    ref.listenManual(authStateProvider, (previous, next) {
-      if (!mounted) return;
-      next.whenData((user) {
-        if (!mounted) return;
-        if (user != null) {
-          Navigator.pushReplacementNamed(context, Routes.main);
-        } else {
-          Navigator.pushReplacementNamed(context, Routes.login);
-        }
-      });
+    _authWaitSubscription?.close();
+    _authWaitSubscription = ref.listenManual(authStateProvider, (previous, next) {
+      next.when(
+        data: (user) {
+          unawaited(_navigateForUser(user));
+        },
+        loading: () {},
+        error: (error, stackTrace) {
+          unawaited(_navigateForUser(null));
+        },
+      );
     });
+  }
+
+  Future<void> _navigateForUser(AppUser? user) async {
+    if (!mounted || _didNavigate) return;
+    _didNavigate = true;
+    _authWaitSubscription?.close();
+
+    final route = user != null ? Routes.main : Routes.login;
+    await Navigator.pushReplacementNamed(context, route);
+  }
+
+  @override
+  void dispose() {
+    _authWaitSubscription?.close();
+    super.dispose();
   }
 
   @override

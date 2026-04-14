@@ -19,6 +19,7 @@ import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/utils/geocoding_utils.dart';
+import 'package:relapse_flutter/utils/map_marker_icon_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Create Memory Reminder screen with step indicator, map selection, radius,
@@ -47,6 +48,10 @@ class _CreateMemoryReminderScreenState
   GoogleMapController? _mapController;
   bool _pendingInitialFocus = true;
   bool _isSearchingLocation = false;
+    BitmapDescriptor _patientMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
+    BitmapDescriptor _memoryMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
 
   LatLng? _selectedLocation;
   double _radius = 50;
@@ -103,8 +108,7 @@ class _CreateMemoryReminderScreenState
         markerId: const MarkerId('patient_location'),
         position: patientPos,
         infoWindow: InfoWindow(title: patientName),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        alpha: 0,
+        icon: _patientMarkerIcon,
       ));
     }
 
@@ -113,8 +117,7 @@ class _CreateMemoryReminderScreenState
         markerId: const MarkerId('memory_location'),
         position: _selectedLocation!,
         infoWindow: const InfoWindow(title: 'Memory Location'),
-        icon:
-            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        icon: _memoryMarkerIcon,
       ));
     }
 
@@ -138,6 +141,24 @@ class _CreateMemoryReminderScreenState
     super.initState();
     _nameController.addListener(_onNameChanged);
     _searchController.addListener(_onSearchChanged);
+    unawaited(_loadMarkerIcons());
+  }
+
+  Future<void> _loadMarkerIcons() async {
+    final patientIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.person_pin_circle,
+      iconColor: AppColors.gradientStart,
+    );
+    final memoryIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.place,
+      iconColor: AppColors.gradientMiddle,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _patientMarkerIcon = patientIcon;
+      _memoryMarkerIcon = memoryIcon;
+    });
   }
 
   @override
@@ -242,7 +263,7 @@ class _CreateMemoryReminderScreenState
       final latLng = await GeocodingUtils.geocodeAddress(query);
       if (latLng != null && mounted) {
         setState(() => _selectedLocation = latLng);
-        _mapController?.animateCamera(
+        await _mapController?.animateCamera(
           CameraUpdate.newLatLngZoom(latLng, 16),
         );
         _searchFocusNode.unfocus();
@@ -610,7 +631,10 @@ class _CreateMemoryReminderScreenState
 
   @override
   Widget build(BuildContext context) {
-    final mapHeight = (MediaQuery.of(context).size.height * 0.4).clamp(
+    final view = View.of(context);
+    // Use physical view height so keyboard insets do not change map height.
+    final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+    final mapHeight = (screenHeight * 0.4).clamp(
       250.0,
       500.0,
     );
@@ -624,8 +648,8 @@ class _CreateMemoryReminderScreenState
           : null,
     );
 
-    // Auto-focus: schedule after each build until successful
-    if (_pendingInitialFocus) {
+    // Auto-focus once when map is ready and a live position is available.
+    if (_pendingInitialFocus && patientPos != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
     }
 

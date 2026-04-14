@@ -2,6 +2,16 @@
 
 A new Flutter project.
 
+## Firestore index deployment
+
+Firestore composite indexes are defined in `firestore.indexes.json` and wired in `firebase.json`.
+
+Use the staging/prod rollout steps in `docs/firestore-index-deployment.md` to deploy indexes consistently.
+
+## Implementation status
+
+Current rollout and phase completion status is tracked in `docs/implementation_status_2026-04-13.md`.
+
 ## Firebase setup
 
 This app now initializes Firebase in `lib/main.dart`.

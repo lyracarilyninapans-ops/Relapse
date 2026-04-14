@@ -91,7 +91,7 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
       );
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, Routes.main);
+      await Navigator.pushReplacementNamed(context, Routes.main);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);
@@ -133,7 +133,7 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
       );
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, Routes.main);
+      await Navigator.pushReplacementNamed(context, Routes.main);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);

@@ -140,7 +140,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     if (picked != null) {
                       final uid = ref.read(authStateProvider).valueOrNull?.uid;
                       if (uid == null) return;
-                      ref
+                      await ref
                           .read(settingsServiceProvider)
                           .setDailyReportTime(uid, picked.hour, picked.minute);
                     }
@@ -320,7 +320,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Device unpaired successfully')),
         );
-        Navigator.pushNamedAndRemoveUntil(
+        await Navigator.pushNamedAndRemoveUntil(
           context,
           Routes.addPatient,
           (route) => false,

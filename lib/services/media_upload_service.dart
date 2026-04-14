@@ -80,17 +80,24 @@ class MediaUploadService {
     final metadata = SettableMetadata(contentType: mimeType);
 
     final uploadTask = ref.putFile(file, metadata);
+    StreamSubscription<TaskSnapshot>? progressSubscription;
 
     if (onProgress != null) {
-      uploadTask.snapshotEvents.listen((snapshot) {
+      progressSubscription = uploadTask.snapshotEvents.listen((snapshot) {
         final progress =
             snapshot.bytesTransferred / snapshot.totalBytes;
         onProgress(progress);
+      }, onError: (Object error, StackTrace stackTrace) {
+        unawaited(progressSubscription?.cancel());
       });
     }
 
-    await uploadTask;
-    return ref.getDownloadURL();
+    try {
+      await uploadTask;
+      return await ref.getDownloadURL();
+    } finally {
+      await progressSubscription?.cancel();
+    }
   }
 
   /// Uploads a memory media file (photo/audio/video) and returns the download URL.

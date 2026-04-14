@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,10 +10,15 @@ class GeocodingUtils {
   static const _apiKey = String.fromEnvironment(
     'MAPS_API_KEY',
   );
+  static const int _maxReverseCacheEntries = 500;
 
-  static final Map<String, String> _reverseCache = <String, String>{};
+  static final LinkedHashMap<String, String> _reverseCache =
+      LinkedHashMap<String, String>();
   static final Map<String, Future<String?>> _reverseInFlight =
       <String, Future<String?>>{};
+  static final HttpClient _httpClient = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 10)
+    ..idleTimeout = const Duration(seconds: 20);
 
   static bool get _hasApiKey => _apiKey.trim().isNotEmpty;
 
@@ -54,7 +60,7 @@ class GeocodingUtils {
     final lngCell = longitude.toStringAsFixed(precision);
     final cacheKey = '$latCell,$lngCell';
 
-    final cached = _reverseCache[cacheKey];
+    final cached = _cacheGet(cacheKey);
     if (cached != null) {
       return Future.value(cached);
     }
@@ -67,7 +73,7 @@ class GeocodingUtils {
     final future = _resolveReverseLabel(latitude, longitude)
         .then((label) {
           if (label != null && label.trim().isNotEmpty) {
-            _reverseCache[cacheKey] = label;
+            _cachePut(cacheKey, label);
           }
           return label;
         })
@@ -103,17 +109,18 @@ class GeocodingUtils {
       '?latlng=$lat,$lng&key=$_apiKey',
     );
 
-    final json = await _getJson(uri);
+    final json = await _getJsonMap(uri);
     if (json == null) return null;
 
     final status = (json['status'] as String?)?.toUpperCase();
     if (status != 'OK') return null;
 
-    final results = json['results'] as List<dynamic>?;
-    if (results == null || results.isEmpty) return null;
+    final results = json['results'];
+    if (results is! List || results.isEmpty) return null;
 
-    final first = results.first;
-    if (first is! Map<String, dynamic>) return null;
+    final firstRaw = results.first;
+    if (firstRaw is! Map) return null;
+    final first = firstRaw.cast<String, dynamic>();
     final address = first['formatted_address'] as String?;
     return address?.trim().isEmpty ?? true ? null : address!.trim();
   }
@@ -124,8 +131,8 @@ class GeocodingUtils {
       '?lat=$lat&lon=$lng&format=jsonv2&zoom=18&addressdetails=1',
     );
 
-    final json = await _getJson(uri);
-    if (json is! Map<String, dynamic>) return null;
+    final json = await _getJsonMap(uri);
+    if (json == null) return null;
 
     final address = json['address'];
     if (address is Map<String, dynamic>) {
@@ -171,16 +178,19 @@ class GeocodingUtils {
       '?address=$encoded&key=$_apiKey',
     );
 
-    final json = await _getJson(uri);
+    final json = await _getJsonMap(uri);
     if (json == null) return null;
 
     final status = (json['status'] as String?)?.toUpperCase();
     if (status != 'OK') return null;
 
-    final results = json['results'] as List<dynamic>?;
-    if (results == null || results.isEmpty) return null;
+    final results = json['results'];
+    if (results is! List || results.isEmpty) return null;
+    final firstRaw = results.first;
+    if (firstRaw is! Map) return null;
+    final first = firstRaw.cast<String, dynamic>();
 
-    final geometry = results.first['geometry'] as Map<String, dynamic>?;
+    final geometry = first['geometry'] as Map<String, dynamic>?;
     final location = geometry?['location'] as Map<String, dynamic>?;
     final lat = (location?['lat'] as num?)?.toDouble();
     final lng = (location?['lng'] as num?)?.toDouble();
@@ -196,11 +206,12 @@ class GeocodingUtils {
       '?q=$encoded&format=jsonv2&limit=1',
     );
 
-    final json = await _getJson(uri);
-    if (json is! List || json.isEmpty) return null;
+    final json = await _getJsonList(uri);
+    if (json == null || json.isEmpty) return null;
 
-    final first = json.first;
-    if (first is! Map<String, dynamic>) return null;
+    final firstRaw = json.first;
+    if (firstRaw is! Map) return null;
+    final first = firstRaw.cast<String, dynamic>();
 
     final lat = double.tryParse('${first['lat']}');
     final lng = double.tryParse('${first['lon']}');
@@ -209,25 +220,51 @@ class GeocodingUtils {
     return LatLng(lat, lng);
   }
 
-  static Future<dynamic> _getJson(Uri uri) async {
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(uri);
-      request.headers.set(
-        HttpHeaders.userAgentHeader,
-        'relapse_flutter/1.0 (contact: support@relapse.app)',
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+  static String? _cacheGet(String key) {
+    final value = _reverseCache.remove(key);
+    if (value == null) return null;
+    // Reinsert to keep recently-read entries at the end (LRU).
+    _reverseCache[key] = value;
+    return value;
+  }
 
-      final response = await request.close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return null;
-      }
-
-      final body = await response.transform(utf8.decoder).join();
-      return jsonDecode(body);
-    } finally {
-      client.close(force: true);
+  static void _cachePut(String key, String value) {
+    if (_reverseCache.containsKey(key)) {
+      _reverseCache.remove(key);
     }
+    _reverseCache[key] = value;
+    if (_reverseCache.length > _maxReverseCacheEntries) {
+      _reverseCache.remove(_reverseCache.keys.first);
+    }
+  }
+
+  static Future<Map<String, dynamic>?> _getJsonMap(Uri uri) async {
+    final decoded = await _getJsonObject(uri);
+    if (decoded is! Map) return null;
+    return decoded.cast<String, dynamic>();
+  }
+
+  static Future<List<dynamic>?> _getJsonList(Uri uri) async {
+    final decoded = await _getJsonObject(uri);
+    if (decoded is! List) return null;
+    return decoded;
+  }
+
+  static Future<Object?> _getJsonObject(Uri uri) async {
+    final request = await _httpClient.getUrl(uri);
+    request.headers.set(
+      HttpHeaders.userAgentHeader,
+      'relapse_flutter/1.0 (contact: support@relapse.app)',
+    );
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+
+    final response = await request.close();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+
+    final body = await response.transform(utf8.decoder).join();
+    final decoded = jsonDecode(body);
+    return decoded is Object ? decoded : null;
   }
 }

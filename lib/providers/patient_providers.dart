@@ -7,11 +7,16 @@ import 'package:relapse_flutter/data/remote/user_remote_source.dart';
 import 'package:relapse_flutter/models/caregiver_profile.dart';
 import 'package:relapse_flutter/models/patient.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/settings_providers.dart';
 
 // ─── Remote Source Providers (cloud-first) ──────────────────────────────
 
 final activityRemoteSourceProvider = Provider<ActivityRemoteSource>((ref) {
-  return ActivityRemoteSource();
+  final useOptimizedLatestLocationQuery =
+      ref.watch(latestLocationOptimizedQueryProvider);
+  return ActivityRemoteSource(
+    useOptimizedLatestLocationQuery: useOptimizedLatestLocationQuery,
+  );
 });
 
 final dailySummaryRemoteSourceProvider =
@@ -40,15 +45,67 @@ final patientsProvider = StreamProvider<List<Patient>>((ref) {
   return ref.watch(patientRemoteSourceProvider).watchPatients(authUser.uid);
 });
 
+class SelectedPatientIdNotifier extends StateNotifier<String?> {
+  final Ref _ref;
+  bool _hasExplicitSelection = false;
+
+  SelectedPatientIdNotifier(this._ref) : super(null) {
+    _ref.listen<AsyncValue<List<Patient>>>(patientsProvider, (previous, next) {
+      autoSelectIfNeeded(next.valueOrNull ?? const <Patient>[]);
+    });
+
+    autoSelectIfNeeded(_ref.read(patientsProvider).valueOrNull ?? const <Patient>[]);
+  }
+
+  /// Explicit user selection that should be preserved while still valid.
+  void selectPatient(String? patientId) {
+    final patients = _ref.read(patientsProvider).valueOrNull ?? const <Patient>[];
+    if (patientId == null) {
+      _hasExplicitSelection = false;
+      autoSelectIfNeeded(patients);
+      return;
+    }
+
+    final exists = patients.any((p) => p.id == patientId);
+    if (!exists) return;
+    _hasExplicitSelection = true;
+    state = patientId;
+  }
+
+  /// Selects a fallback only when no valid selection exists.
+  /// This never overwrites a valid explicit user selection.
+  void autoSelectIfNeeded(List<Patient> patients) {
+    if (patients.isEmpty) {
+      _hasExplicitSelection = false;
+      state = null;
+      return;
+    }
+
+    if (_hasExplicitSelection) {
+      final stillValid = state != null && patients.any((p) => p.id == state);
+      if (stillValid) return;
+      _hasExplicitSelection = false;
+    }
+
+    final currentValid = state != null && patients.any((p) => p.id == state);
+    if (currentValid) return;
+
+    state = _preferredPatientId(patients);
+  }
+
+  String _preferredPatientId(List<Patient> patients) {
+    final paired = patients.where(
+      (p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty,
+    );
+    if (paired.isNotEmpty) return paired.first.id;
+    return patients.first.id;
+  }
+}
+
 /// Currently selected patient ID.
-/// Prefers the patient with an active watch pairing; falls back to first.
-final selectedPatientIdProvider = StateProvider<String?>((ref) {
-  final patients = ref.watch(patientsProvider).valueOrNull;
-  if (patients == null || patients.isEmpty) return null;
-  // Prefer the patient that currently has a paired watch.
-  final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
-  if (paired.isNotEmpty) return paired.first.id;
-  return patients.first.id;
+final selectedPatientIdProvider =
+    StateNotifierProvider<SelectedPatientIdNotifier, String?>((ref) {
+  return SelectedPatientIdNotifier(ref);
 });
 
 /// Currently selected patient object.
@@ -56,22 +113,23 @@ final selectedPatientProvider = Provider<Patient?>((ref) {
   final patients = ref.watch(patientsProvider).valueOrNull;
   final selectedId = ref.watch(selectedPatientIdProvider);
   if (patients == null || patients.isEmpty) return null;
+
+  Patient preferredFallback() {
+    final paired = patients.where(
+      (p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty,
+    );
+    if (paired.isNotEmpty) return paired.first;
+    return patients.first;
+  }
+
   if (selectedId == null) {
-    // Fallback: prefer paired patient, then first.
-    final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
-    return paired.isNotEmpty ? paired.first : patients.first;
+    return preferredFallback();
   }
-  try {
-    return patients.firstWhere((p) => p.id == selectedId);
-  } catch (_) {
-    // Selected ID is stale — pick the paired patient or first.
-    final paired = patients.where((p) => p.pairedWatchId != null && p.pairedWatchId!.isNotEmpty);
-    final fallback = paired.isNotEmpty ? paired.first : patients.first;
-    Future.microtask(() {
-      ref.read(selectedPatientIdProvider.notifier).state = fallback.id;
-    });
-    return fallback;
+
+  for (final patient in patients) {
+    if (patient.id == selectedId) return patient;
   }
+  return preferredFallback();
 });
 
 // ─── Caregiver Profile Provider ─────────────────────────────────────────

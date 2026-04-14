@@ -42,6 +42,12 @@ class FirebaseNotificationService implements NotificationService {
   final FlutterLocalNotificationsPlugin _localNotifications;
   final FirebaseFirestore _firestore;
 
+  StreamSubscription<RemoteMessage>? _onMessageSubscription;
+  StreamSubscription<RemoteMessage>? _onMessageOpenedAppSubscription;
+  StreamSubscription<String>? _onTokenRefreshSubscription;
+  bool _isInitialized = false;
+  String? _currentTokenUid;
+
   final _tapController = StreamController<NotificationPayload>.broadcast();
 
   // Notification channel IDs
@@ -75,6 +81,9 @@ class FirebaseNotificationService implements NotificationService {
 
   @override
   Future<void> initialize() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+
     // Request permissions
     await _messaging.requestPermission(
       alert: true,
@@ -144,10 +153,14 @@ class FirebaseNotificationService implements NotificationService {
     }
 
     // Handle FCM foreground messages
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    await _onMessageSubscription?.cancel();
+    _onMessageSubscription =
+      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
     // Handle notification taps that open the app from terminated/background
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
+    await _onMessageOpenedAppSubscription?.cancel();
+    _onMessageOpenedAppSubscription =
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
     // Check if app was opened from a notification (terminated state)
     final initialMessage = await _messaging.getInitialMessage();
@@ -373,12 +386,29 @@ class FirebaseNotificationService implements NotificationService {
 
   @override
   Future<void> registerFcmToken(String uid) async {
+    _currentTokenUid = uid;
+
     final token = await getFcmToken();
     if (token == null) {
       debugPrint('FCM token is null; registration skipped for uid=$uid');
       return;
     }
 
+    await _writeFcmToken(uid, token, logPrefix: 'registered');
+
+    // Register exactly one token refresh listener for app lifetime.
+    _onTokenRefreshSubscription ??= _messaging.onTokenRefresh.listen((newToken) {
+      final activeUid = _currentTokenUid;
+      if (activeUid == null) return;
+      unawaited(_writeFcmToken(activeUid, newToken, logPrefix: 'refreshed'));
+    });
+  }
+
+  Future<void> _writeFcmToken(
+    String uid,
+    String token, {
+    required String logPrefix,
+  }) async {
     final deviceId = '${Platform.operatingSystem}_${token.hashCode}';
     await _firestore
         .collection('users')
@@ -390,27 +420,13 @@ class FirebaseNotificationService implements NotificationService {
       'platform': Platform.operatingSystem,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
-    debugPrint('FCM token registered for uid=$uid deviceId=$deviceId');
-
-    // Listen for token refresh
-    _messaging.onTokenRefresh.listen((newToken) {
-      final newDeviceId =
-          '${Platform.operatingSystem}_${newToken.hashCode}';
-      _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('devices')
-          .doc(newDeviceId)
-          .set({
-        'fcmToken': newToken,
-        'platform': Platform.operatingSystem,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      debugPrint('FCM token refreshed for uid=$uid deviceId=$newDeviceId');
-    });
+    debugPrint('FCM token $logPrefix for uid=$uid deviceId=$deviceId');
   }
 
   void dispose() {
+    _onMessageSubscription?.cancel();
+    _onMessageOpenedAppSubscription?.cancel();
+    _onTokenRefreshSubscription?.cancel();
     _tapController.close();
   }
 }

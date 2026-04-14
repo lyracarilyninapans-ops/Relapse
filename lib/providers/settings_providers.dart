@@ -39,3 +39,15 @@ final dailyReportTimeProvider = Provider<TimeOfDay>((ref) {
 final themeModeProvider = Provider<String>((ref) {
   return ref.watch(appSettingsProvider).valueOrNull?.themeMode ?? 'system';
 });
+
+/// Runtime flag for latest-location query strategy.
+/// Default can be overridden per build with:
+/// --dart-define=LATEST_LOCATION_OPTIMIZED_QUERY=true|false
+final latestLocationOptimizedQueryProvider = Provider<bool>((ref) {
+  const defaultFromBuild = bool.fromEnvironment(
+    'LATEST_LOCATION_OPTIMIZED_QUERY',
+    defaultValue: true,
+  );
+  return ref.watch(appSettingsProvider).valueOrNull?.useOptimizedLatestLocationQuery ??
+      defaultFromBuild;
+});

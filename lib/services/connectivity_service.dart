@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+final ConnectivityPlusService appConnectivityService =
+  ConnectivityPlusService();
+
 /// Monitors network connectivity for UI indicators.
 /// Data sync is handled automatically by Firestore's offline persistence.
 abstract class ConnectivityService {
@@ -14,8 +17,10 @@ abstract class ConnectivityService {
 class ConnectivityPlusService implements ConnectivityService {
   final Connectivity _connectivity;
   bool _isOnline = true;
-  late final StreamSubscription<List<ConnectivityResult>> _subscription;
+  StreamSubscription<List<ConnectivityResult>>? _subscription;
   final _controller = StreamController<bool>.broadcast();
+  bool _isInitialized = false;
+  bool _isDisposed = false;
 
   ConnectivityPlusService({Connectivity? connectivity})
       : _connectivity = connectivity ?? Connectivity();
@@ -28,8 +33,12 @@ class ConnectivityPlusService implements ConnectivityService {
 
   @override
   Future<void> initialize() async {
+    if (_isInitialized || _isDisposed) return;
+    _isInitialized = true;
+
     final results = await _connectivity.checkConnectivity();
     _isOnline = _hasConnection(results);
+    _controller.add(_isOnline);
 
     _subscription = _connectivity.onConnectivityChanged.listen((results) {
       final online = _hasConnection(results);
@@ -49,7 +58,9 @@ class ConnectivityPlusService implements ConnectivityService {
 
   @override
   void dispose() {
-    _subscription.cancel();
+    if (_isDisposed) return;
+    _isDisposed = true;
+    _subscription?.cancel();
     _controller.close();
   }
 }

@@ -18,7 +18,7 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final sw = MediaQuery.of(context).size.width;
+    final sw = MediaQuery.sizeOf(context).width;
     final patient = ref.watch(selectedPatientProvider);
     final hasPatient = patient != null;
 
@@ -74,16 +74,16 @@ class HomeScreen extends ConsumerWidget {
           onSelected: (value) async {
             switch (value) {
               case 'settings':
-                Navigator.pushNamed(context, Routes.settings);
+                await Navigator.pushNamed(context, Routes.settings);
                 break;
               case 'profile':
-                Navigator.pushNamed(context, Routes.editCaregiver);
+                await Navigator.pushNamed(context, Routes.editCaregiver);
                 break;
               case 'logout':
                 try {
                   await ref.read(authServiceProvider).signOut();
                   if (context.mounted) {
-                    Navigator.pushNamedAndRemoveUntil(
+                    await Navigator.pushNamedAndRemoveUntil(
                       context,
                       Routes.login,
                       (route) => false,
@@ -301,50 +301,12 @@ class _WatchStatusBanner extends ConsumerWidget {
 
 
 // ─── Patient Overview Card ────────────────────────────────────────────
-class _PatientOverviewCard extends ConsumerWidget {
+class _PatientOverviewCard extends StatelessWidget {
   final double screenWidth;
   const _PatientOverviewCard({required this.screenWidth});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final patient = ref.watch(selectedPatientProvider);
-    final szStatus = ref.watch(safeZoneStatusProvider);
-    final liveLocation = ref.watch(liveLocationProvider);
-    final watchConnected = ref.watch(watchConnectedProvider);
-
-    final name = patient?.name ?? 'Unknown';
-    final photoUrl = patient?.photoUrl;
-    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
-    final initials = name.isNotEmpty
-        ? name.split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase()
-        : '?';
-
-    final updatedText = liveLocation.when(
-      data: (record) {
-        if (record == null) {
-          return watchConnected ? 'Waiting for location...' : 'No location data';
-        }
-        final diff = DateTime.now().difference(record.timestamp);
-        if (diff.inMinutes < 1) return 'Updated just now';
-        if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
-        return '${diff.inHours}h ago';
-      },
-      loading: () => 'Loading...',
-        error: (error, stackTrace) =>
-          watchConnected ? 'Waiting for data...' : 'Unavailable',
-    );
-
-    final szLabel = switch (szStatus) {
-      SafeZoneStatus.inside => 'Inside Safe Zone',
-      SafeZoneStatus.outside => 'Outside Safe Zone',
-      SafeZoneStatus.unknown => watchConnected ? 'Locating...' : 'No Safe Zone Data',
-    };
-    final szColors = switch (szStatus) {
-      SafeZoneStatus.inside => [AppColors.safeZoneInsideStart, AppColors.safeZoneInsideEnd],
-      SafeZoneStatus.outside => [AppColors.safeZoneOutsideStart, AppColors.safeZoneOutsideEnd],
-      SafeZoneStatus.unknown => [Colors.grey, Colors.grey.shade600],
-    };
-
+  Widget build(BuildContext context) {
     final avatarSize = (screenWidth * 0.20).clamp(64.0, 140.0);
 
     return Container(
@@ -362,104 +324,14 @@ class _PatientOverviewCard extends ConsumerWidget {
         child: Row(
           children: [
             // Avatar
-            Container(
-              width: avatarSize,
-              height: avatarSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: AppGradients.cardBorder,
-              ),
-              padding: const EdgeInsets.all(3),
-              child: hasPhoto
-                  ? ClipOval(
-                      child: Image.network(
-                        photoUrl,
-                        width: avatarSize - 6,
-                        height: avatarSize - 6,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            _buildInitialsAvatar(
-                          initials, avatarSize, context),
-                      ),
-                    )
-                  : _buildInitialsAvatar(initials, avatarSize, context),
-            ),
+            _PatientAvatar(avatarSize: avatarSize),
             const SizedBox(width: 16),
 
-            // Info column
+            // Identity and status are split so location ticks do not rebuild
+            // the static avatar/name section.
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: scaledFontSize(20, screenWidth),
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primaryColor,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.access_time,
-                        size: 16,
-                        color: Colors.grey[600],
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        updatedText,
-                        style: TextStyle(
-                          fontSize: scaledFontSize(12, screenWidth),
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Status pill
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(colors: szColors),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: szColors.first.withAlpha(102),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          szLabel,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              child: _PatientOverviewInfoColumn(
+                screenWidth: screenWidth,
               ),
             ),
 
@@ -481,8 +353,52 @@ class _PatientOverviewCard extends ConsumerWidget {
       ),
     );
   }
+}
 
-  Widget _buildInitialsAvatar(String initials, double avatarSize, BuildContext context) {
+class _PatientAvatar extends ConsumerWidget {
+  final double avatarSize;
+
+  const _PatientAvatar({required this.avatarSize});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final patient = ref.watch(selectedPatientProvider);
+    final name = patient?.name ?? 'Unknown';
+    final photoUrl = patient?.photoUrl;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+    final initials = name.isNotEmpty
+        ? name
+            .split(' ')
+            .map((w) => w.isNotEmpty ? w[0] : '')
+            .take(2)
+            .join()
+            .toUpperCase()
+        : '?';
+
+    return Container(
+      width: avatarSize,
+      height: avatarSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: AppGradients.cardBorder,
+      ),
+      padding: const EdgeInsets.all(3),
+      child: hasPhoto
+          ? ClipOval(
+              child: Image.network(
+                photoUrl,
+                width: avatarSize - 6,
+                height: avatarSize - 6,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) =>
+                    _buildInitialsAvatar(initials),
+              ),
+            )
+          : _buildInitialsAvatar(initials),
+    );
+  }
+
+  Widget _buildInitialsAvatar(String initials) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.primaryContainerColor,
@@ -498,6 +414,116 @@ class _PatientOverviewCard extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PatientOverviewInfoColumn extends ConsumerWidget {
+  final double screenWidth;
+
+  const _PatientOverviewInfoColumn({required this.screenWidth});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final patientName = ref.watch(selectedPatientProvider)?.name ?? 'Unknown';
+    final szStatus = ref.watch(safeZoneStatusProvider);
+    final liveLocation = ref.watch(liveLocationProvider);
+    final watchConnected = ref.watch(watchConnectedProvider);
+
+    final updatedText = liveLocation.when(
+      data: (record) {
+        if (record == null) {
+          return watchConnected ? 'Waiting for location...' : 'No location data';
+        }
+        final diff = DateTime.now().difference(record.timestamp);
+        if (diff.inMinutes < 1) return 'Updated just now';
+        if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+        return '${diff.inHours}h ago';
+      },
+      loading: () => 'Loading...',
+      error: (error, stackTrace) =>
+          watchConnected ? 'Waiting for data...' : 'Unavailable',
+    );
+
+    final szLabel = switch (szStatus) {
+      SafeZoneStatus.inside => 'Inside Safe Zone',
+      SafeZoneStatus.outside => 'Outside Safe Zone',
+      SafeZoneStatus.unknown => watchConnected ? 'Locating...' : 'No Safe Zone Data',
+    };
+    final szColors = switch (szStatus) {
+      SafeZoneStatus.inside => [AppColors.safeZoneInsideStart, AppColors.safeZoneInsideEnd],
+      SafeZoneStatus.outside => [AppColors.safeZoneOutsideStart, AppColors.safeZoneOutsideEnd],
+      SafeZoneStatus.unknown => [Colors.grey, Colors.grey.shade600],
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          patientName,
+          style: TextStyle(
+            fontSize: scaledFontSize(20, screenWidth),
+            fontWeight: FontWeight.bold,
+            color: AppColors.primaryColor,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(
+              Icons.access_time,
+              size: 16,
+              color: Colors.grey[600],
+            ),
+            const SizedBox(width: 4),
+            Text(
+              updatedText,
+              style: TextStyle(
+                fontSize: scaledFontSize(12, screenWidth),
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: szColors),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: szColors.first.withAlpha(102),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                szLabel,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

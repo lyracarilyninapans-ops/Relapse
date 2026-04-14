@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:async';
 import 'package:relapse_flutter/models/media_item.dart';
 import 'package:relapse_flutter/models/memory_reminder.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
@@ -23,6 +24,10 @@ class MemoryDetailsScreen extends ConsumerStatefulWidget {
 class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
   AudioPlayer? _audioPlayer;
   VideoPlayerController? _videoController;
+  StreamSubscription<Duration>? _audioDurationSub;
+  StreamSubscription<Duration>? _audioPositionSub;
+  StreamSubscription<void>? _audioCompleteSub;
+  String? _audioSourceUrl;
   bool _isAudioPlaying = false;
   Duration _audioDuration = Duration.zero;
   Duration _audioPosition = Duration.zero;
@@ -30,24 +35,38 @@ class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
 
   @override
   void dispose() {
+    _audioDurationSub?.cancel();
+    _audioPositionSub?.cancel();
+    _audioCompleteSub?.cancel();
     _audioPlayer?.dispose();
     _videoController?.dispose();
     super.dispose();
   }
 
-  void _initAudioPlayer(String url) {
-    if (_audioPlayer != null) return;
+  Future<void> _initAudioPlayer(String url) async {
+    if (_audioPlayer != null && _audioSourceUrl == url) return;
+
+    await _audioDurationSub?.cancel();
+    await _audioPositionSub?.cancel();
+    await _audioCompleteSub?.cancel();
+    await _audioPlayer?.dispose();
+
+    _audioSourceUrl = url;
+    _audioDuration = Duration.zero;
+    _audioPosition = Duration.zero;
+    _isAudioPlaying = false;
+
     _audioPlayer = AudioPlayer();
-    _audioPlayer!.onDurationChanged.listen((d) {
+    _audioDurationSub = _audioPlayer!.onDurationChanged.listen((d) {
       if (mounted) setState(() => _audioDuration = d);
     });
-    _audioPlayer!.onPositionChanged.listen((p) {
+    _audioPositionSub = _audioPlayer!.onPositionChanged.listen((p) {
       if (mounted) setState(() => _audioPosition = p);
     });
-    _audioPlayer!.onPlayerComplete.listen((_) {
+    _audioCompleteSub = _audioPlayer!.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _isAudioPlaying = false);
     });
-    _audioPlayer!.setSourceUrl(url);
+    await _audioPlayer!.setSourceUrl(url);
   }
 
   void _initVideoPlayer(String url) {
@@ -59,12 +78,12 @@ class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
   }
 
   Future<void> _toggleAudio(String url) async {
-    _initAudioPlayer(url);
+    await _initAudioPlayer(url);
     if (_isAudioPlaying) {
       await _audioPlayer!.pause();
       setState(() => _isAudioPlaying = false);
     } else {
-      await _audioPlayer!.play(UrlSource(url));
+      await _audioPlayer!.resume();
       setState(() => _isAudioPlaying = true);
     }
   }
@@ -218,7 +237,6 @@ class _MemoryDetailsScreenState extends ConsumerState<MemoryDetailsScreen> {
                     ),
                   );
                 }
-                _initAudioPlayer(audioUrl);
                 return Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(

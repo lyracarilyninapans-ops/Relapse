@@ -1,10 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/services/connectivity_service.dart';
 
 /// Singleton ConnectivityService instance.
 final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
-  final service = ConnectivityPlusService();
-  ref.onDispose(() => service.dispose());
+  final service = appConnectivityService;
+  unawaited(service.initialize());
+  ref.onDispose(service.dispose);
   return service;
 });
 

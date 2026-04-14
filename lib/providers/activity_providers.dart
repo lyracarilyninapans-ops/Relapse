@@ -6,6 +6,7 @@ import 'package:relapse_flutter/models/daily_summary.dart';
 import 'package:relapse_flutter/models/safe_zone.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
 import 'package:relapse_flutter/providers/patient_providers.dart';
+import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/utils/date_range.dart';
 
 // ─── Date Range Filter ──────────────────────────────────────────────────
@@ -126,13 +127,8 @@ enum SafeZoneStatus { inside, outside, unknown }
 
 /// Safe zones for current patient.
 final safeZoneConfigProvider =
-    StreamProvider<List<SafeZone>>((ref) {
-  final authUser = ref.watch(authStateProvider).valueOrNull;
-  final patientId = ref.watch(selectedPatientIdProvider);
-  if (authUser == null || patientId == null) return const Stream.empty();
-  return ref
-      .watch(safeZoneRemoteSourceProvider)
-      .watchSafeZones(authUser.uid, patientId);
+    Provider<AsyncValue<List<SafeZone>>>((ref) {
+  return ref.watch(safeZonesProvider);
 });
 
 /// Derived safe zone status from live location + safe zone config.

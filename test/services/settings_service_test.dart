@@ -10,6 +10,7 @@ void main() {
       expect(settings.dailyReportHour, 20);
       expect(settings.dailyReportMinute, 0);
       expect(settings.themeMode, 'system');
+      expect(settings.useOptimizedLatestLocationQuery, true);
     });
 
     test('fromMap parses values correctly', () {
@@ -19,12 +20,14 @@ void main() {
         'daily_report_hour': 8,
         'daily_report_minute': 30,
         'theme_mode': 'dark',
+        'use_optimized_latest_location_query': false,
       });
       expect(settings.reminderCooldownMinutes, 60);
       expect(settings.notificationSoundEnabled, false);
       expect(settings.dailyReportHour, 8);
       expect(settings.dailyReportMinute, 30);
       expect(settings.themeMode, 'dark');
+      expect(settings.useOptimizedLatestLocationQuery, false);
     });
 
     test('fromMap uses defaults for missing keys', () {
@@ -34,6 +37,7 @@ void main() {
       expect(settings.dailyReportHour, 20);
       expect(settings.dailyReportMinute, 0);
       expect(settings.themeMode, 'system');
+      expect(settings.useOptimizedLatestLocationQuery, true);
     });
 
     test('fromMap handles partial data', () {
@@ -45,6 +49,19 @@ void main() {
       expect(settings.notificationSoundEnabled, true); // default
       expect(settings.dailyReportHour, 20); // default
       expect(settings.themeMode, 'light');
+      expect(settings.useOptimizedLatestLocationQuery, true); // default
+    });
+
+    test('fromMap parses latest-location query flag when provided', () {
+      final settingsEnabled = AppSettings.fromMap({
+        'use_optimized_latest_location_query': true,
+      });
+      final settingsDisabled = AppSettings.fromMap({
+        'use_optimized_latest_location_query': false,
+      });
+
+      expect(settingsEnabled.useOptimizedLatestLocationQuery, true);
+      expect(settingsDisabled.useOptimizedLatestLocationQuery, false);
     });
   });
 

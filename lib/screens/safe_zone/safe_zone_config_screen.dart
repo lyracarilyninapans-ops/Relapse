@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -11,6 +13,7 @@ import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/safe_zone_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
+import 'package:relapse_flutter/utils/map_marker_icon_utils.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
 
 /// Safe Zone Configuration screen with map, radius slider, settings, event logs.
@@ -33,11 +36,37 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
   LatLng _safeZoneCenter = const LatLng(37.7749, -122.4194);
   bool _isSaving = false;
   bool _initialized = false;
+  BitmapDescriptor _safeZoneMarkerIcon = BitmapDescriptor.defaultMarker;
+  BitmapDescriptor _patientMarkerIcon =
+      BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 14,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadMarkerIcons());
+  }
+
+  Future<void> _loadMarkerIcons() async {
+    final safeZoneIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.shield,
+      iconColor: AppColors.gradientMiddle,
+    );
+    final patientIcon = await MapMarkerIconUtils.materialIconMarker(
+      icon: Icons.person_pin_circle,
+      iconColor: AppColors.gradientStart,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _safeZoneMarkerIcon = safeZoneIcon;
+      _patientMarkerIcon = patientIcon;
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -66,6 +95,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         markerId: const MarkerId('safe_zone_center'),
         position: _safeZoneCenter,
         infoWindow: const InfoWindow(title: 'Safe Zone Center'),
+        icon: _safeZoneMarkerIcon,
       ),
     };
 
@@ -76,7 +106,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
         infoWindow: InfoWindow(
           title: ref.read(selectedPatientProvider)?.name ?? 'Patient',
         ),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        icon: _patientMarkerIcon,
       ));
     }
 
