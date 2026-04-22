@@ -6,6 +6,27 @@ import { ActivityRecord } from "../types";
 import { claimLock } from "../utils/idempotency";
 import { sendPushToUser } from "../utils/notifications";
 
+export function extractReminderIdFromMetadata(metadata: unknown): string {
+  if (!metadata) return "";
+
+  if (typeof metadata === "object") {
+    const value = (metadata as Record<string, unknown>).reminderId;
+    return typeof value === "string" ? value : "";
+  }
+
+  if (typeof metadata === "string") {
+    try {
+      const parsed = JSON.parse(metadata) as Record<string, unknown>;
+      const value = parsed.reminderId;
+      return typeof value === "string" ? value : "";
+    } catch {
+      return "";
+    }
+  }
+
+  return "";
+}
+
 /**
  * Trigger 5: onReminderTriggeredEvent
  * Sends push notification when a memory reminder is triggered.
@@ -32,7 +53,7 @@ export const onReminderTriggeredEvent = onDocumentCreated(
     if (!(await claimLock(lockPath, lockId))) return;
 
     // Try to resolve the reminder title
-    const reminderId = (data.metadata?.reminderId as string) || "";
+    const reminderId = extractReminderIdFromMetadata(data.metadata);
     let reminderTitle = "Memory Reminder";
 
     if (reminderId) {
@@ -48,9 +69,25 @@ export const onReminderTriggeredEvent = onDocumentCreated(
       }
     }
 
+    // Resolve patient name for a more descriptive caregiver push body.
+    let patientName = "Patient";
+    try {
+      const patientDoc = await admin.firestore().doc(paths.patient(uid, patientId)).get();
+      const resolvedName = patientDoc.data()?.name;
+      if (typeof resolvedName === "string" && resolvedName.trim().length > 0) {
+        patientName = resolvedName.trim();
+      }
+    } catch (err) {
+      logger.warn("Failed to resolve patient for reminder push", { err, uid, patientId });
+    }
+
+    const body = reminderTitle === "Memory Reminder"
+      ? `${patientName} has triggered a memory reminder.`
+      : `${patientName}: ${reminderTitle}`;
+
     const sent = await sendPushToUser(uid,
       "Memory Reminder",
-      reminderTitle,
+      body,
       {
         type: "reminder_triggered",
         patientId,

@@ -78,10 +78,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     ref.listen(pairingInfoProvider, (prev, next) {
       final prevInfo = prev?.valueOrNull;
       final nextInfo = next.valueOrNull;
-      if (prevInfo != null &&
-          prevInfo.status == PairingStatus.paired &&
+      final becameUnpaired =
           nextInfo != null &&
-          nextInfo.status == PairingStatus.unpaired) {
+          nextInfo.status == PairingStatus.unpaired &&
+          prevInfo?.status != PairingStatus.unpaired;
+      if (becameUnpaired) {
         // Skip if the phone itself initiated the unpair.
         if (ref.read(isLocallyUnpairingProvider)) return;
         _handleRemoteUnpair();
@@ -172,7 +173,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       if (authUser != null && patient != null) {
         await ref
             .read(patientRemoteSourceProvider)
-            .deletePatient(authUser.uid, patient.id);
+            .clearPairedWatch(authUser.uid, patient.id);
       }
     } catch (_) {
       // Best-effort cleanup; navigation still happens.

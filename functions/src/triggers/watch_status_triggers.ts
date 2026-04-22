@@ -14,13 +14,16 @@ import { sendPushToUser } from "../utils/notifications";
  */
 export const onWatchStatusChanged = onDocumentWritten(
   {
-    document: "users/{uid}/patients/{patientId}/watchStatus/current",
+    // Watch updates are written as `watchStatus` map on the patient document.
+    document: "users/{uid}/patients/{patientId}",
     region: REGION,
   },
   async (event) => {
     const { uid, patientId } = event.params;
-    const beforeData = event.data?.before?.data() as WatchStatus | undefined;
-    const afterData = event.data?.after?.data() as WatchStatus | undefined;
+    const beforeDoc = event.data?.before?.data() as Record<string, unknown> | undefined;
+    const afterDoc = event.data?.after?.data() as Record<string, unknown> | undefined;
+    const beforeData = parseWatchStatus(beforeDoc?.watchStatus);
+    const afterData = parseWatchStatus(afterDoc?.watchStatus);
 
     if (!afterData) return;
 
@@ -128,3 +131,21 @@ export const onWatchStatusChanged = onDocumentWritten(
     }
   },
 );
+
+function parseWatchStatus(input: unknown): WatchStatus | undefined {
+  if (!input || typeof input !== "object") return undefined;
+
+  const raw = input as Record<string, unknown>;
+  const isConnected = Boolean(raw.isConnected);
+  const batteryRaw = raw.batteryLevel;
+  const batteryLevel = typeof batteryRaw === "number"
+    ? batteryRaw
+    : typeof batteryRaw === "string"
+      ? Number.parseInt(batteryRaw, 10)
+      : undefined;
+
+  return {
+    isConnected,
+    batteryLevel: Number.isFinite(batteryLevel as number) ? batteryLevel : undefined,
+  };
+}

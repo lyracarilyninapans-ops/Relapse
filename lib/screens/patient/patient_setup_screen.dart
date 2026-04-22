@@ -54,6 +54,18 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
     try {
       final watchId = ModalRoute.of(context)?.settings.arguments as String?;
 
+      // Ensure only one patient remains linked to a watch at a time.
+      if (watchId != null && watchId.isNotEmpty) {
+        final existingPatients = ref.read(patientsProvider).valueOrNull ?? const [];
+        for (final existing in existingPatients) {
+          if (existing.pairedWatchId != null && existing.pairedWatchId!.isNotEmpty) {
+            await ref
+                .read(patientRemoteSourceProvider)
+                .clearPairedWatch(authUser.uid, existing.id);
+          }
+        }
+      }
+
       // Upload profile photo if picked
       String? photoUrl;
       if (_pickedPhoto != null) {
@@ -83,6 +95,9 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
             patient,
           );
 
+      // Explicitly switch app state to the newly created patient.
+      ref.read(selectedPatientIdProvider.notifier).selectPatient(patientDocId);
+
       // Mark pairing as fully completed now that the patient profile exists.
       await ref.read(watchServiceProvider).finalizePairing(
         authUser.uid,
@@ -111,6 +126,18 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
     try {
       final watchId = ModalRoute.of(context)?.settings.arguments as String?;
 
+      // Ensure only one patient remains linked to a watch at a time.
+      if (watchId != null && watchId.isNotEmpty) {
+        final existingPatients = ref.read(patientsProvider).valueOrNull ?? const [];
+        for (final existing in existingPatients) {
+          if (existing.pairedWatchId != null && existing.pairedWatchId!.isNotEmpty) {
+            await ref
+                .read(patientRemoteSourceProvider)
+                .clearPairedWatch(authUser.uid, existing.id);
+          }
+        }
+      }
+
       // Create a placeholder patient so the app enters paired mode.
       final patient = Patient(
         id: '',
@@ -124,6 +151,9 @@ class _PatientSetupScreenState extends ConsumerState<PatientSetupScreen> {
             authUser.uid,
             patient,
           );
+
+      // Explicitly switch app state to the newly created patient.
+      ref.read(selectedPatientIdProvider.notifier).selectPatient(patientDocId);
 
       // Finalize the pairing status.
       await ref.read(watchServiceProvider).finalizePairing(

@@ -24,6 +24,7 @@ export {
 } from "./triggers/activity_triggers";
 export {
 	onLocationUpdateToSafeZoneEvaluation,
+	onSafeZoneEventCreated,
 } from "./triggers/safe_zone_triggers";
 export { onWatchStatusChanged } from "./triggers/watch_status_triggers";
 export { onReminderTriggeredEvent } from "./triggers/reminder_triggers";

@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:relapse_flutter/providers/auth_providers.dart';
+import 'package:relapse_flutter/providers/patient_providers.dart';
 import 'package:relapse_flutter/providers/watch_providers.dart';
 import 'package:relapse_flutter/routes.dart';
 import 'package:relapse_flutter/theme/app_colors.dart';
 import 'package:relapse_flutter/theme/app_gradients.dart';
 import 'package:relapse_flutter/theme/responsive.dart';
 import 'package:relapse_flutter/widgets/common/common.dart';
+
+enum _PostClaimAction { createNew, useExisting }
 
 /// Add Patient screen where the caregiver enters the pairing code
 /// displayed on the patient's watch.
@@ -21,8 +24,10 @@ class AddPatientScreen extends ConsumerStatefulWidget {
 }
 
 class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
-  final List<TextEditingController> _digitControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _digitControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
   bool _isSubmitting = false;
   String? _errorMessage;
@@ -38,10 +43,11 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
     super.dispose();
   }
 
-  String get _enteredCode =>
-      _digitControllers.map((c) => c.text).join();
+  String get _enteredCode => _digitControllers.map((c) => c.text).join();
 
   Future<void> _submitCode() async {
+    if (_isSubmitting) return;
+
     final code = _enteredCode;
     if (code.length != 6) {
       setState(() => _errorMessage = 'Please enter all 6 digits');
@@ -61,7 +67,35 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
           .read(watchServiceProvider)
           .submitPairingCode(authUser.uid, code);
 
+      final patients = ref.read(patientsProvider).valueOrNull ?? const [];
+      if (patients.isNotEmpty) {
+        final action = await _showPostClaimActionDialog();
+        if (!mounted) return;
+        if (action == null) {
+          setState(() => _isSubmitting = false);
+          return;
+        }
+
+        if (action == _PostClaimAction.useExisting) {
+          final selectedPatient = await _showExistingPatientPicker();
+          if (!mounted) return;
+          if (selectedPatient == null) {
+            setState(() => _isSubmitting = false);
+            return;
+          }
+
+          await _pairWithExistingPatient(
+            uid: authUser.uid,
+            watchId: watchId,
+            patientId: selectedPatient,
+          );
+          return;
+        }
+      }
+
       if (!mounted) return;
+      // Reset explicit selection so setup can establish the new patient context.
+      ref.read(selectedPatientIdProvider.notifier).selectPatient(null);
       await Navigator.pushReplacementNamed(
         context,
         Routes.patientSetup,
@@ -76,15 +110,118 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
     }
   }
 
+  Future<_PostClaimAction?> _showPostClaimActionDialog() async {
+    return showDialog<_PostClaimAction>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Complete Pairing'),
+        content: const Text(
+          'Choose an existing patient to re-pair this watch, or create a new patient profile.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _PostClaimAction.createNew),
+            child: const Text('Create New'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, _PostClaimAction.useExisting),
+            child: const Text('Use Existing'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showExistingPatientPicker() async {
+    final patients = ref.read(patientsProvider).valueOrNull ?? const [];
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text(
+                  'Select Existing Patient',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              for (final patient in patients)
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(patient.name),
+                  subtitle:
+                      patient.pairedWatchId != null &&
+                          patient.pairedWatchId!.isNotEmpty
+                      ? const Text('Currently has a linked watch')
+                      : const Text('No linked watch'),
+                  onTap: () => Navigator.pop(ctx, patient.id),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pairWithExistingPatient({
+    required String uid,
+    required String watchId,
+    required String patientId,
+  }) async {
+    final patientSource = ref.read(patientRemoteSourceProvider);
+    final selected = await patientSource.getPatient(uid, patientId);
+    if (selected == null) {
+      throw Exception('Selected patient could not be loaded');
+    }
+
+    final allPatients = ref.read(patientsProvider).valueOrNull ?? const [];
+    for (final patient in allPatients) {
+      if (patient.id != selected.id &&
+          patient.pairedWatchId != null &&
+          patient.pairedWatchId!.isNotEmpty) {
+        await patientSource.clearPairedWatch(uid, patient.id);
+      }
+    }
+
+    await patientSource.savePatient(
+      uid,
+      selected.copyWith(pairedWatchId: watchId),
+    );
+
+    await ref
+        .read(watchServiceProvider)
+        .finalizePairing(
+          uid,
+          patientName: selected.name,
+          patientId: selected.id,
+        );
+
+    ref.read(selectedPatientIdProvider.notifier).selectPatient(selected.id);
+
+    if (!mounted) return;
+    await Navigator.pushNamedAndRemoveUntil(
+      context,
+      Routes.main,
+      (route) => false,
+    );
+  }
+
   void _onDigitChanged(int index, String value) {
-    setState(() => _errorMessage = null);
+    // Avoid rebuilding the whole page on every keystroke.
+    if (_errorMessage != null) {
+      setState(() => _errorMessage = null);
+    }
 
     if (value.length == 1 && index < 5) {
       _focusNodes[index + 1].requestFocus();
     }
 
     // Auto-submit when all 6 digits entered
-    if (_enteredCode.length == 6) {
+    if (_enteredCode.length == 6 && !_isSubmitting) {
       _submitCode();
     }
   }
@@ -102,99 +239,127 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text('Add Patient'),
         backgroundColor: Colors.white,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-
-            // Header icon
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: const BoxDecoration(
-                gradient: AppGradients.primaryAction,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.watch_outlined,
-                size: 64,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            Text(
-              'Enter Watch Code',
-              style: TextStyle(
-                fontSize: scaledFontSize(24, sw),
-                fontWeight: FontWeight.bold,
-                color: AppColors.primaryColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-
-            // Instructions card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceColor,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(20),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
+      body: SafeArea(
+        child: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(24, 24, 24, 24 + bottomInset),
+            child: Column(
+              children: [
+            RepaintBoundary(
               child: Column(
                 children: [
-                  // Header row
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppColors.gradientStart.withAlpha(51),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.watch,
-                          color: AppColors.gradientStart,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        'Setup Instructions',
-                        style: TextStyle(
-                          fontSize: scaledFontSize(18, sw),
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryColor,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(height: 20),
+
+                  // Header icon
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: const BoxDecoration(
+                      gradient: AppGradients.primaryAction,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.watch_outlined,
+                      size: 64,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+
+                  Text(
+                    'Enter Watch Code',
+                    style: TextStyle(
+                      fontSize: scaledFontSize(24, sw),
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryColor,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
 
-                  // Steps
-                  _buildStep(sw, 1, 'Open Watch App',
-                      'Open the Relapse app on the patient\'s watch'),
-                  _buildStep(sw, 2, 'Find the Code',
-                      'A 6-digit code will appear on the watch screen'),
-                  _buildStep(sw, 3, 'Enter Code Below',
-                      'Type the code shown on the watch into the fields below'),
-                  _buildStep(sw, 4, 'Wait for Connection',
-                      'The devices will connect automatically'),
+                  // Instructions card
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceColor,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withAlpha(20),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // Header row
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: AppColors.gradientStart.withAlpha(51),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.watch,
+                                color: AppColors.gradientStart,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Setup Instructions',
+                              style: TextStyle(
+                                fontSize: scaledFontSize(18, sw),
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Steps
+                        _buildStep(
+                          sw,
+                          1,
+                          'Open Watch App',
+                          'Open the Relapse app on the patient\'s watch',
+                        ),
+                        _buildStep(
+                          sw,
+                          2,
+                          'Find the Code',
+                          'A 6-digit code will appear on the watch screen',
+                        ),
+                        _buildStep(
+                          sw,
+                          3,
+                          'Enter Code Below',
+                          'Type the code shown on the watch into the fields below',
+                        ),
+                        _buildStep(
+                          sw,
+                          4,
+                          'Wait for Connection',
+                          'The devices will connect automatically',
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -202,17 +367,21 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
 
             // Code input fields — gradient-bordered container
             Container(
-              padding: const EdgeInsets.all(2.5),
+              padding: const EdgeInsets.all(2),
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 gradient: AppGradients.cardBorder,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                clipBehavior: Clip.antiAlias,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 24,
+                  horizontal: 16,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(13.5),
+                  borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
                   children: [
@@ -235,15 +404,15 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
                       ],
                     ),
                     if (_errorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _errorMessage!,
-                      style: TextStyle(
-                        color: Colors.red[700],
-                        fontSize: scaledFontSize(13, sw),
+                      const SizedBox(height: 12),
+                      Text(
+                        _errorMessage!,
+                        style: TextStyle(
+                          color: Colors.red[700],
+                          fontSize: scaledFontSize(13, sw),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
                     if (_isSubmitting) ...[
                       const SizedBox(height: 16),
                       Row(
@@ -281,11 +450,15 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
             ),
             const SizedBox(height: 24),
 
-            const InfoBox(
-              text:
-                  'Need help? Contact support at support@relapsecare.com for assistance with device pairing.',
+            const RepaintBoundary(
+              child: InfoBox(
+                text:
+                    'Need help? Contact support at support@relapsecare.com for assistance with device pairing.',
+              ),
             ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -293,44 +466,51 @@ class _AddPatientScreenState extends ConsumerState<AddPatientScreen> {
 
   /// A single digit-entry field wrapped in a gradient border.
   Widget _buildDigitField(int index, double sw) {
-    final hasError = _errorMessage != null;
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        gradient: hasError
-            ? const LinearGradient(colors: [Colors.red, Colors.red])
-            : AppGradients.cardBorder,
-        borderRadius: BorderRadius.circular(10),
-      ),
+    return RepaintBoundary(
       child: Container(
+        height: 56,
+        padding: const EdgeInsets.all(2),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          gradient: AppGradients.cardBorder,
+          borderRadius: BorderRadius.circular(10),
         ),
-        child: KeyboardListener(
-          focusNode: FocusNode(),
-          onKeyEvent: (event) => _onKeyPress(index, event),
-          child: TextField(
-            controller: _digitControllers[index],
-            focusNode: _focusNodes[index],
-            textAlign: TextAlign.center,
-            keyboardType: TextInputType.number,
-            maxLength: 1,
-            style: TextStyle(
-              fontSize: scaledFontSize(24, sw),
-              fontWeight: FontWeight.bold,
-              color: AppColors.primaryColor,
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Focus(
+            onKeyEvent: (_, event) {
+              _onKeyPress(index, event);
+              return KeyEventResult.ignored;
+            },
+            child: TextField(
+              controller: _digitControllers[index],
+              focusNode: _focusNodes[index],
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              scrollPadding: const EdgeInsets.only(bottom: 72),
+              maxLength: 1,
+              style: TextStyle(
+                fontSize: scaledFontSize(24, sw),
+                fontWeight: FontWeight.bold,
+                color: AppColors.primaryColor,
+              ),
+              decoration: const InputDecoration(
+                counterText: '',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 8),
+              ),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (v) => _onDigitChanged(index, v),
             ),
-            decoration: const InputDecoration(
-              counterText: '',
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(vertical: 8),
-            ),
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-            ],
-            onChanged: (v) => _onDigitChanged(index, v),
           ),
         ),
       ),

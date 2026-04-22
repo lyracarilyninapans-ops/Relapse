@@ -184,7 +184,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               _sectionTitle('Danger Zone', color: AppColors.errorColor),
               const SizedBox(height: 4),
               Text(
-                'Unpairing will disconnect the patient device. All safe zone monitoring will stop.',
+                'Unpairing will disconnect the watch. Patient profile and history are kept. Monitoring will stop until you pair again.',
                 style: TextStyle(fontSize: 13, color: Colors.grey[600]),
               ),
               const SizedBox(height: 16),
@@ -307,11 +307,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // also try to navigate.
       ref.read(isLocallyUnpairingProvider.notifier).state = true;
 
-      // Delete the old patient record entirely so it doesn't linger
-      // and get picked up as 'selected' after re-pairing.
+        // Keep patient history; only clear the watch linkage.
       await ref
           .read(patientRemoteSourceProvider)
-          .deletePatient(authUser.uid, patient.id);
+          .clearPairedWatch(authUser.uid, patient.id);
 
       // Unpair the watch via Firestore
       await ref.read(watchServiceProvider).unpairWatch(authUser.uid);

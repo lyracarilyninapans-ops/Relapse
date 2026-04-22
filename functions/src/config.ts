@@ -13,6 +13,8 @@ export const BATTERY_THRESHOLDS = [20, 10, 5];
 
 /** Firestore path helpers. */
 export const paths = {
+  patient: (uid: string, patientId: string) =>
+    `users/${uid}/patients/${patientId}`,
   activityRecords: (uid: string, patientId: string) =>
     `users/${uid}/patients/${patientId}/activityRecords`,
   dailySummaries: (uid: string, patientId: string) =>

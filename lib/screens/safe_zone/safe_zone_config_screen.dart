@@ -598,7 +598,7 @@ class _SafeZoneConfigScreenState extends ConsumerState<SafeZoneConfigScreen> {
           ),
           Slider(
             value: _radius,
-            min: 20,
+            min: 1,
             max: 2000,
             divisions: 198,
             activeColor: AppColors.primaryColor,

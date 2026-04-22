@@ -250,8 +250,24 @@ class _WatchStatusBanner extends ConsumerWidget {
     final icon = connected ? Icons.watch : Icons.watch_off;
     final title = connected ? 'Watch Connected' : 'Watch Offline';
     final message = connected
-        ? 'Patient device is online and reporting.${battery != null ? ' Battery: $battery%' : ''}'
+      ? 'Patient device is online and reporting live status.'
         : 'Patient device is not reachable.';
+    final batteryColor = battery == null
+      ? Colors.grey.shade600
+      : battery <= 10
+        ? Colors.red.shade700
+        : battery <= 20
+          ? Colors.orange.shade700
+          : Colors.green.shade700;
+    final batteryIcon = battery == null
+      ? Icons.battery_unknown
+      : battery <= 10
+        ? Icons.battery_1_bar
+        : battery <= 20
+          ? Icons.battery_2_bar
+          : battery <= 50
+            ? Icons.battery_4_bar
+            : Icons.battery_full;
 
     return Container(
       width: double.infinity,
@@ -290,6 +306,34 @@ class _WatchStatusBanner extends ConsumerWidget {
                     context,
                   ).textTheme.bodyMedium?.copyWith(color: Colors.black87),
                 ),
+                if (connected) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: batteryColor.withAlpha(20),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: batteryColor.withAlpha(120)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(batteryIcon, size: 16, color: batteryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          battery == null
+                              ? 'Battery: unavailable'
+                              : 'Battery: $battery%',
+                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                color: batteryColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
